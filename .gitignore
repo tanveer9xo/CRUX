@@ -1,0 +1,26 @@
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Dependencies (the app has none)
+node_modules/
+
+# Build output (tools/build-site.mjs; GitHub Actions builds its own)
+_site/
+
+# Test output, screenshots and headless Chrome profiles
+screenshots/
+test-results/
+*.log
+crux-e2e-*/
+crux-icons-*/
+
+# Your data: exported backups never belong in the repo
+crux-backup-*.json
+*.backup.json
+
+# Local secrets and settings
+.env
+.env.*
+.claude/settings.local.json
