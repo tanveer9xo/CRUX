@@ -89,6 +89,12 @@ export function toast(message, { action, onAction, ms } = {}) {
   toastTimer = setTimeout(close, ms ?? (action ? 7000 : 2600));
 }
 
+/** Remove any toast now (the Add/Edit screen pins Save where toasts appear). */
+export function clearToast() {
+  clearTimeout(toastTimer);
+  document.getElementById('toasts')?.replaceChildren();
+}
+
 // ---- bottom sheets & confirm ----
 /** Open a sheet. `build(close)` returns its content. Esc, the backdrop or close() dismiss it. */
 export function sheet(title, build, { onClose } = {}) {

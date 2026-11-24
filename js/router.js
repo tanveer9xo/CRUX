@@ -1,3 +1,5 @@
+import { clearToast } from './ui.js';
+
 // Hash routing: #/, #/add, #/entry/<id>, #/history?m=&c=, #/insights?t=, #/plan?m=, #/settings.
 // Hash routes need no server rewrites, so deep links work on GitHub Pages and offline.
 
@@ -56,6 +58,7 @@ function show(r, { keepScroll = false } = {}) {
   current = r;
   renderedKey = r.key;
   if (!r.view.isEditor) lastPage = r.key;
+  if (r.view.isEditor) clearToast();
   main.replaceChildren(r.view.render(r));
   main.dataset.view = r.view.name;
   document.querySelectorAll('.tabbar [data-tab]').forEach((a) => {

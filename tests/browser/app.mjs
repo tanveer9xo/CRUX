@@ -125,7 +125,11 @@ check(await ev(`indexedDB.databases().then((d) => d.some((x) => x.name === 'work
 check(await ev(`Object.keys(localStorage).every((k) => k === 'appearance' || k.startsWith('crux'))`), 'every localStorage key CRUX wrote starts with “crux”');
 
 const cats = await idb('categories');
-check(cats.length === 8 && cats.every((c) => !/\d/.test(c.name)), `seeded ${cats.length} generic sample categories, no entries`);
+const WANT = ['Rent', 'Bike EMI', 'Buffer/Miscellaneous', 'Groceries', 'CC Payment', 'Dine In/Out', 'Gym', 'Petrol', 'Bhatuk', 'Insurance', 'Subscriptions', 'Wifi', 'Furniture', 'Electricity', 'Supplements', 'Cosmetics', 'Bike Maintenance', 'Phone Bill'];
+check(JSON.stringify([...cats].sort((a, b) => a.order - b.order).map((c) => c.name)) === JSON.stringify(WANT), 'seeded the 18 categories in the requested order');
+check(new Set(cats.map((c) => c.emoji)).size === 18 && new Set(cats.map((c) => c.color)).size === 18, 'each seeded category has its own emoji and colour');
+const seededPlan = (await idb('budgets'))[0]?.plan ?? {};
+check(Object.keys(seededPlan).length === 18 && Object.values(seededPlan).every((v) => v === 0), 'every seeded budget is ₹0');
 check((await idb('entries')).length === 0, 'no sample entries are seeded');
 await shot('01-home-empty');
 
@@ -142,6 +146,13 @@ check((inst.installabilityErrors ?? []).length === 0, `Chrome's install criteria
 await tap('.tab-add');
 check(await ev(`document.activeElement?.id === 'amount'`), 'tap 1 (+) opens Add with the amount field focused');
 await typeText('1250.5');
+// 18 chips: all inside the screen, none cut off, none overlapping, and Save pinned in view above the tab bar.
+const chipBox = await ev(`(() => { const r = [...document.querySelectorAll('.add-form .chip[role=radio]')].map((c) => { const b = c.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, clipped: c.scrollWidth > c.clientWidth + 1 }; }); return r; })()`);
+check(chipBox.length === 18 && chipBox.every((c) => c.l >= 0 && c.r <= 390 && !c.clipped), 'Add: all 18 chips fit within the screen width, none clipped');
+const overlap = chipBox.some((a, i) => chipBox.some((b, j) => j > i && a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1));
+check(!overlap, 'Add: no chips overlap');
+const saveBox = await ev(`(() => { const s = document.querySelector('.add-form button[type=submit]').getBoundingClientRect(); const t = document.querySelector('.tabbar').getBoundingClientRect(); return { sBottom: s.bottom, sTop: s.top, tabTop: t.top, tall: document.documentElement.scrollHeight > innerHeight }; })()`);
+check(saveBox.sBottom <= saveBox.tabTop && saveBox.sTop > 0, `Add: Save stays visible above the tab bar (page is ${saveBox.tall ? 'taller than the screen, so it scrolls' : 'one screen'})`);
 await shot('02-add');
 await tap('.chip[role=radio]');
 await tap('.add-form button[type=submit]');
@@ -153,6 +164,7 @@ check(await ev(`!!document.querySelector('.banner')`), 'backup reminder shows (n
 
 // validation: no category picked
 await tap('.tab-add');
+check(!(await ev(`!!document.querySelector('.toast')`)), 'opening Add clears the old toast, so it can’t cover Save');
 await typeText('99');
 await tap('.add-form button[type=submit]');
 check((await text('.form-error')) === 'Pick a category.', 'Save without a category asks for one');
@@ -173,6 +185,19 @@ check((await text('.toast-btn')) === 'Undo', 'an Undo button appears after delet
 await click('.toast-btn');
 await sleep(300);
 check((await idb('entries')).length === 1 && (await ev(`!!document.querySelector('.entry')`)), 'Undo brings the entry back');
+
+// The last chip (needs scrolling to) can be picked and saved: Phone Bill, with Save still pinned in view.
+await tap('.tab-add');
+await typeText('499');
+await ev(`document.querySelector('.add-form .chip:last-of-type').scrollIntoView({ block: 'center' }); true`);
+await sleep(300);
+await shot('02b-add-scrolled');
+await tap('.add-form .chip:last-of-type');
+check(await ev(`document.querySelector('.add-form .chip[aria-checked=true]')?.textContent.includes('Phone Bill')`), 'Add: scrolling to the last chip and tapping it selects Phone Bill');
+await tap('.add-form button[type=submit]');
+await sleep(300);
+const phone = (await idb('entries')).find((e) => e.amount === 49900);
+check(phone && cats.find((c) => c.id === phone.categoryId)?.name === 'Phone Bill', 'Add: the entry saved under Phone Bill');
 
 // ---- sample history for the rest of the checks (generic numbers, test-only) ----
 await ev(`(async () => {
@@ -222,7 +247,7 @@ await shot('07-insights-months');
 await ev(`document.getElementById('h-trend').scrollIntoView(); true`);
 await shot('07b-insights-trend');
 await clickText('.seg', 'Budget');
-check(await ev(`document.querySelectorAll('.prog-row').length >= 8`), 'Insights: budget progress per category');
+check(await ev(`document.querySelectorAll('.prog-row').length >= 18`), 'Insights: budget progress per category');
 await shot('08-insights-budget');
 
 // ---- history ----

@@ -5,6 +5,7 @@ import { todayYmd, monthOf } from './dates.js';
 import { rollover, setBudget as setBudgetPure, budgetsFor } from './budget.js';
 import { buildBackup } from './backup.js';
 import { byNewest } from './insights.js';
+import { SEED_CATEGORIES, SEED_BUDGET, COLORS } from './seed.js';
 
 export const state = {
   categories: [], // sorted by order
@@ -13,22 +14,7 @@ export const state = {
   lastExport: undefined, // ms
 };
 
-// Category swatches: the validated dark-mode categorical steps (dataviz reference palette), in fixed order,
-// plus a neutral. Status colours (amber, red) are kept out so a category can never look like a warning.
-export const COLORS = ['#3987E5', '#D95926', '#199E70', '#C98500', '#D55181', '#0CA30C', '#9085E9', '#E66767', '#7C8796'];
-
-// Generic sample categories for a first run. Round placeholder budgets so the progress bars mean something;
-// edit or archive them in Plan. No sample entries.
-const SEED = [
-  ['🛒', 'Groceries', 800000],
-  ['🏠', 'Rent & bills', 2500000],
-  ['🍽️', 'Eating out', 400000],
-  ['🚕', 'Transport', 300000],
-  ['🛍️', 'Shopping', 500000],
-  ['💊', 'Health', 200000],
-  ['🎬', 'Fun', 300000],
-  ['📦', 'Other', 200000],
-];
+export { COLORS };
 
 export const uid = () => {
   const b = crypto.getRandomValues(new Uint8Array(9));
@@ -57,8 +43,8 @@ export async function init() {
 async function seed() {
   const now = Date.now();
   const month = currentMonth();
-  const cats = SEED.map(([emoji, name], i) => ({ id: uid(), name, emoji, color: COLORS[i % COLORS.length], order: i, archived: false, createdAt: now }));
-  const plan = Object.fromEntries(cats.map((c, i) => [c.id, SEED[i][2]]));
+  const cats = SEED_CATEGORIES.map(({ name, emoji, color }, i) => ({ id: uid(), name, emoji, color, order: i, archived: false, createdAt: now }));
+  const plan = Object.fromEntries(cats.map((c) => [c.id, SEED_BUDGET]));
   await db.write([...cats.map((c) => ({ store: 'categories', put: c })), { store: 'budgets', put: { month, plan } }, { store: 'meta', put: { key: 'seeded', value: now } }]);
   state.categories = cats;
   state.budgets = { [month]: plan };
