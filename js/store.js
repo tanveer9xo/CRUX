@@ -40,11 +40,16 @@ export async function init() {
   await ensureCurrentMonth();
 }
 
-async function seed() {
+function starterData(month) {
   const now = Date.now();
-  const month = currentMonth();
   const cats = SEED_CATEGORIES.map(({ name, emoji, color }, i) => ({ id: uid(), name, emoji, color, order: i, archived: false, createdAt: now }));
   const plan = Object.fromEntries(cats.map((c) => [c.id, SEED_BUDGET]));
+  return { now, cats, plan };
+}
+
+async function seed() {
+  const month = currentMonth();
+  const { now, cats, plan } = starterData(month);
   await db.write([...cats.map((c) => ({ store: 'categories', put: c })), { store: 'budgets', put: { month, plan } }, { store: 'meta', put: { key: 'seeded', value: now } }]);
   state.categories = cats;
   state.budgets = { [month]: plan };
@@ -160,6 +165,28 @@ export async function importData(data) {
   sortCats();
   sortEntries();
   await ensureCurrentMonth();
+}
+
+/** Remove CRUX's own localStorage keys (names starting "crux") and nothing else: VANE shares this origin. */
+function clearCruxLocalStorage() {
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('crux')) localStorage.removeItem(k);
+  } catch { /* storage blocked */ }
+}
+
+/**
+ * Wipe CRUX's data and put the starter categories back (₹0 budgets, no expenses), in one transaction on the
+ * "crux" database. Also removes crux-prefixed localStorage keys. Never touches other databases, keys or caches.
+ */
+export async function resetToStarter() {
+  const month = currentMonth();
+  const { now, cats, plan } = starterData(month);
+  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [] }, { seeded: now }, { clearMeta: true });
+  clearCruxLocalStorage();
+  state.categories = cats;
+  state.budgets = { [month]: plan };
+  state.entries = [];
+  state.lastExport = undefined;
 }
 
 export async function eraseAll() {

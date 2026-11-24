@@ -106,7 +106,20 @@ await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (Linux; A
 // ---- VANE's data on the same origin, before CRUX ever runs ----
 await send('Page.navigate', { url: `${ORIGIN}/VANE/` });
 await sleep(600);
-await ev(`(async () => { localStorage.setItem('appearance', 'dark'); await caches.open('workout-tracker-1.14.0'); await new Promise((ok) => { const r = indexedDB.open('workout-tracker', 1); r.onupgradeneeded = () => r.result.createObjectStore('x'); r.onsuccess = () => { r.result.close(); ok(); }; }); return true; })()`);
+// Fake VANE data of every kind CRUX could be tempted to wipe: localStorage, a cache with a file in it, an
+// IndexedDB database with a record, and a second database. (CRUX's own marker key is added to prove the
+// reset does clear crux-prefixed keys.)
+await ev(`(async () => {
+  localStorage.setItem('appearance', 'dark');
+  localStorage.setItem('backupNudgeDismissedAt', '1700000000000');
+  localStorage.setItem('cruxLeftover', 'crux-owned key');
+  const c = await caches.open('workout-tracker-1.14.0');
+  await c.put('/VANE/vane-file.txt', new Response('vane cached file'));
+  for (const name of ['workout-tracker', 'vane-extra']) {
+    await new Promise((ok, no) => { const r = indexedDB.open(name, 1); r.onupgradeneeded = () => r.result.createObjectStore('sessions', { keyPath: 'id' }); r.onsuccess = () => { const tx = r.result.transaction('sessions', 'readwrite'); tx.objectStore('sessions').put({ id: 1, note: 'vane workout ' + name }); tx.oncomplete = () => { r.result.close(); ok(); }; }; r.onerror = () => no(r.error); });
+  }
+  return true;
+})()`);
 
 // ---- first visit ----
 await send('Page.navigate', { url: BASE });
@@ -122,7 +135,7 @@ check(cached.urls.length === assets.length + 1 && cached.urls.every((u) => u.sta
 check(cached.keys.includes('workout-tracker-1.14.0'), 'VANE’s cache on the same origin is untouched');
 check(await ev(`localStorage.getItem('appearance') === 'dark'`), 'VANE’s localStorage is untouched');
 check(await ev(`indexedDB.databases().then((d) => d.some((x) => x.name === 'workout-tracker') && d.some((x) => x.name === 'crux'))`), 'CRUX uses its own database (“crux”) next to VANE’s');
-check(await ev(`Object.keys(localStorage).every((k) => k === 'appearance' || k.startsWith('crux'))`), 'every localStorage key CRUX wrote starts with “crux”');
+check(await ev(`Object.keys(localStorage).every((k) => k === 'appearance' || k === 'backupNudgeDismissedAt' || k.startsWith('crux'))`), 'every localStorage key CRUX wrote starts with “crux”');
 
 const cats = await idb('categories');
 const WANT = ['Rent', 'Bike EMI', 'Buffer/Miscellaneous', 'Groceries', 'CC Payment', 'Dine In/Out', 'Gym', 'Petrol', 'Bhatuk', 'Insurance', 'Subscriptions', 'Wifi', 'Furniture', 'Electricity', 'Supplements', 'Cosmetics', 'Bike Maintenance', 'Phone Bill'];
@@ -316,6 +329,50 @@ await tap('.chip[role=radio]');
 await tap('.add-form button[type=submit]');
 check((await idb('entries')).length === 4, 'offline: adding an expense works');
 await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+
+// ---- reset to starter categories: CRUX's data only; VANE's data on the same origin survives ----
+const vaneSnapshot = () => ev(`(async () => {
+  const dbs = {};
+  for (const name of ['workout-tracker', 'vane-extra']) dbs[name] = await new Promise((ok) => { const r = indexedDB.open(name); r.onsuccess = () => { const q = r.result.transaction('sessions').objectStore('sessions').getAll(); q.onsuccess = () => { ok(q.result.map((x) => x.note)); r.result.close(); }; }; r.onerror = () => ok('error'); });
+  const cache = await caches.open('workout-tracker-1.14.0');
+  const cached = await cache.match('/VANE/vane-file.txt');
+  return { appearance: localStorage.getItem('appearance'), nudge: localStorage.getItem('backupNudgeDismissedAt'), dbs, cachedText: cached ? await cached.text() : null, cacheNames: (await caches.keys()).filter((k) => !k.startsWith('crux-')) };
+})()`);
+const vaneBefore = await vaneSnapshot();
+check(vaneBefore.appearance === 'dark' && vaneBefore.cachedText === 'vane cached file' && vaneBefore.dbs['workout-tracker'][0] === 'vane workout workout-tracker', 'VANE fixture is in place before the reset');
+check(await ev(`localStorage.getItem('cruxLeftover') === 'crux-owned key'`), 'a crux-prefixed localStorage key exists before the reset');
+const entriesBefore = (await idb('entries')).length;
+await send('Page.navigate', { url: `${BASE}#/settings` });
+await sleep(1200);
+await shot('12-settings-reset');
+// Cancel changes nothing.
+await click('#reset-btn');
+check((await text('.sheet h2')) === 'Reset to starter categories?', 'Reset asks for confirmation first');
+check((await text('.sheet')).includes('Export a backup first') && (await text('.sheet')).includes(`${entriesBefore} expenses`), `the dialog suggests an Export and says how many expenses (${entriesBefore}) go`);
+await shot('13-reset-confirm');
+await clickText('.sheet .btn', 'Cancel');
+check((await idb('entries')).length === entriesBefore, 'Cancel leaves everything as it was');
+// Export first, from inside the dialog, then reset.
+await click('#reset-btn');
+await click('#reset-export');
+await sleep(800);
+check((await text('.sheet [role=status]')) === 'Backup saved. You can reset now.', 'Export from inside the dialog works');
+await click('#reset-confirm');
+await sleep(600);
+const cats2 = (await idb('categories')).sort((a, b) => a.order - b.order);
+check(JSON.stringify(cats2.map((c) => c.name)) === JSON.stringify(WANT), 'after reset: the 18 starter categories, in order');
+check((await idb('entries')).length === 0, 'after reset: no expenses');
+const plan2 = (await idb('budgets')).flatMap((b) => Object.values(b.plan));
+check(plan2.length === 18 && plan2.every((v) => v === 0), 'after reset: every budget is ₹0');
+check((await idb('budgets')).length === 1, 'after reset: a single month of budgets (no old history)');
+check((await idb('meta')).every((m) => m.key !== 'lastExport') && cats2.every((c) => !cats.some((o) => o.id === c.id)), 'after reset: old ids and the last-export date are gone (a fresh start)');
+check(await ev(`localStorage.getItem('cruxLeftover') === null`), 'after reset: crux-prefixed localStorage keys are removed');
+check(await ev(`location.hash === '#/' && document.querySelector('.hero-amt').textContent === '₹0'`), 'after reset: back on Home showing ₹0');
+const vaneAfter = await vaneSnapshot();
+check(JSON.stringify(vaneAfter) === JSON.stringify(vaneBefore), 'VANE’s localStorage, caches and both of its databases survive the reset untouched');
+check(await ev(`indexedDB.databases().then((d) => ['workout-tracker', 'vane-extra', 'crux'].every((n) => d.some((x) => x.name === n)))`), 'all three databases (VANE’s two and CRUX’s) still exist');
+check(await ev(`caches.keys().then((k) => k.some((n) => n.startsWith('crux-')))`), 'CRUX’s own app cache is untouched too, so it still works offline');
+await shot('14-after-reset');
 
 check(failed.length === 0, `no failed requests${failed.length ? `: ${failed.slice(0, 3).join(', ')}` : ''}`);
 const outside = requests.filter((u) => /^https?:/.test(u) && !u.startsWith(BASE) && !u.startsWith(`${ORIGIN}/VANE/`));

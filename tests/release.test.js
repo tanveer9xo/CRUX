@@ -34,6 +34,25 @@ test('every storage name starts with "crux" (VANE shares the github.io origin)',
   assert.match(read('sw.js'), /key\.startsWith\(PREFIX\)/, 'the service worker must only delete its own caches');
 });
 
+test('nothing in the app can wipe more than CRUX’s own data (VANE shares the origin)', () => {
+  const files = [...walk('js'), 'sw.js'];
+  const src = files.map((f) => read(f)).join('\n');
+  // Broad wipes would also destroy VANE's data.
+  assert.doesNotMatch(src, /localStorage\.clear|sessionStorage\.clear|indexedDB\.databases|Clear-Site-Data/);
+  assert.doesNotMatch(read('js/pwa.js') + read('js/store.js') + read('js/db.js') + walk('js/views').map((f) => read(f)).join(''), /caches\.(?:delete|keys)/);
+  // Deleting a database is only ever by the constant name "crux".
+  for (const m of src.matchAll(/deleteDatabase\(\s*([^)]*)\)/g)) assert.equal(m[1].trim(), 'DB_NAME');
+  // The reset removes only crux-prefixed localStorage keys, and writes only through the crux database module.
+  const store = read('js/store.js');
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); // ignore comments
+  const reset = code(store.slice(store.indexOf('function clearCruxLocalStorage'), store.indexOf('export async function eraseAll')));
+  assert.match(reset, /k\.startsWith\('crux'\)/);
+  assert.match(reset, /db\.replaceAll\(/);
+  assert.doesNotMatch(reset, /indexedDB|caches|fetch|sessionStorage/);
+  // Every removeItem in the app is guarded the same way.
+  for (const m of src.matchAll(/localStorage\.removeItem\(([^)]*)\)/g)) assert.equal(m[1].trim(), 'k');
+});
+
 test('no network calls or third-party hosts in the app', () => {
   const src = walk('js').map((f) => read(f)).join('\n') + read('index.html') + read('css/app.css');
   assert.doesNotMatch(src, /\bfetch\(|XMLHttpRequest|sendBeacon|WebSocket|https?:\/\/(?!www\.w3\.org)/);

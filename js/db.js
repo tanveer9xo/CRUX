@@ -66,11 +66,14 @@ export async function getMeta(key) {
 
 export const setMeta = (key, value) => put('meta', { key, value });
 
-/** Replace all data in one transaction (import / erase). Meta keys in `keepMeta` survive. */
-export async function replaceAll({ categories, budgets, entries }, meta = {}) {
+/**
+ * Replace all data in one transaction on the "crux" database (import / erase / reset). Meta keys survive
+ * unless `clearMeta` is set (reset). Only this database's own stores are touched.
+ */
+export async function replaceAll({ categories, budgets, entries }, meta = {}, { clearMeta = false } = {}) {
   const db = await openDB();
   const tx = db.transaction(STORES, 'readwrite');
-  for (const s of ['categories', 'budgets', 'entries']) tx.objectStore(s).clear();
+  for (const s of clearMeta ? STORES : ['categories', 'budgets', 'entries']) tx.objectStore(s).clear();
   for (const c of categories) tx.objectStore('categories').put(c);
   for (const [month, plan] of Object.entries(budgets)) tx.objectStore('budgets').put({ month, plan });
   for (const e of entries) tx.objectStore('entries').put(e);

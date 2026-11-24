@@ -1,9 +1,10 @@
 // Settings: backup (export / import), install, updates, version, erase.
-import { h, icon, toast, confirmDialog } from '../ui.js';
+import { h, icon, toast, confirmDialog, sheet } from '../ui.js';
 import { todayYmd } from '../dates.js';
 import { parseBackup, backupFileName, daysSince } from '../backup.js';
 import { APP_VERSION } from '../version.js';
-import { state, exportData, markExported, importData, eraseAll } from '../store.js';
+import { state, exportData, markExported, importData, eraseAll, resetToStarter } from '../store.js';
+import { SEED_CATEGORIES } from '../seed.js';
 import { install, promptInstall, installHelp, isStandalone, isIOS, checkForUpdate, isPersisted, requestPersistence } from '../pwa.js';
 import { go, refresh } from '../router.js';
 import { pageHead } from './common.js';
@@ -63,6 +64,37 @@ async function doImport(fileInput) {
   go('#/');
 }
 
+/** Confirm a reset, with an Export button right there (a reset deletes every expense on this device). */
+function resetDialog() {
+  sheet('Reset to starter categories?', (close) => {
+    const status = h('p', { class: 'muted small', role: 'status' });
+    const exportBtn = h('button', {
+      class: 'btn', type: 'button', id: 'reset-export',
+      onclick: async () => {
+        try { if (await doExport()) status.textContent = 'Backup saved. You can reset now.'; } catch (e) { status.textContent = `Export failed: ${e.message}`; }
+      },
+    }, icon('download'), 'Export a backup first');
+    return h('div', { class: 'sheet-body' },
+      h('p', { class: 'muted' }, `This deletes all ${state.entries.length} expenses, every budget and all your categories on this device, and puts back the ${SEED_CATEGORIES.length} starter categories with ₹0 budgets.`),
+      h('p', { class: 'muted' }, 'Only CRUX’s own data is deleted; nothing else on this site is touched. It can’t be undone, so export a backup first if you might want your data back.'),
+      status,
+      exportBtn,
+      h('div', { class: 'btn-row' },
+        h('button', { class: 'btn', type: 'button', autofocus: true, onclick: close }, 'Cancel'),
+        h('button', {
+          class: 'btn btn-danger', type: 'button', id: 'reset-confirm',
+          onclick: async () => {
+            try {
+              await resetToStarter();
+            } catch (e) { status.textContent = `Reset failed: ${e.message}`; return; }
+            close();
+            toast(`Reset: ${SEED_CATEGORIES.length} starter categories, no expenses`);
+            go('#/');
+          },
+        }, 'Reset')));
+  });
+}
+
 export function render({ query }) {
   const exportedText = Number.isFinite(state.lastExport)
     ? `Last export ${daysSince(state.lastExport, Date.now()) === 0 ? 'today' : `${daysSince(state.lastExport, Date.now())} days ago`}.`
@@ -111,6 +143,11 @@ export function render({ query }) {
     h('section', { class: 'card' },
       h('h2', {}, 'Privacy'),
       h('p', { class: 'muted' }, 'No accounts, no servers, no analytics. Nothing you enter leaves this device unless you export it.')),
+
+    h('section', { class: 'card danger-zone' },
+      h('h2', {}, 'Reset to starter categories'),
+      h('p', { class: 'muted' }, `Deletes your expenses, budgets and categories, then restores the ${SEED_CATEGORIES.length} starter categories at ₹0. Export a backup first.`),
+      h('button', { class: 'btn btn-ghost-danger', type: 'button', id: 'reset-btn', onclick: resetDialog }, icon('refresh'), 'Reset to starter categories')),
 
     h('section', { class: 'card danger-zone' },
       h('h2', {}, 'Erase everything'),
