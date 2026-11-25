@@ -33,6 +33,8 @@ jobs:
         run: npm test
       - name: Browser test (served at /CRUX/; install, offline, add/edit/undo, plan, insights, backup)
         run: CHROME="$(command -v google-chrome || command -v chromium)" node tests/browser/app.mjs
+      - name: Screen review (11 screens × 360/390/430 px × dark/light; overflow, 44px targets, no emoji)
+        run: CHROME="$(command -v google-chrome || command -v chromium)" node tests/browser/screens.mjs
 
   deploy:
     needs: test

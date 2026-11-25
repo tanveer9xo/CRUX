@@ -174,7 +174,7 @@ const rateText = (r) => (r === null ? '—' : `${r}%`);
 function ratePill(points) {
   if (points === null) return h('span', { class: 'pill pill-new', title: 'No income to compare with' }, 'No comparison');
   if (points === 0) return h('span', { class: 'pill pill-flat' }, 'Same');
-  return h('span', { class: `pill ${points > 0 ? 'pill-down' : 'pill-up'}`, 'aria-label': `${Math.abs(points)} percentage points ${points > 0 ? 'higher' : 'lower'}` }, points > 0 ? '▲' : '▼', ` ${Math.abs(points)} pts`);
+  return h('span', { class: `pill ${points > 0 ? 'pill-down' : 'pill-up'}`, 'aria-label': `${Math.abs(points)} percentage points ${points > 0 ? 'higher' : 'lower'}` }, icon(points > 0 ? 'arrow-up' : 'arrow-down'), `${Math.abs(points)} pts`);
 }
 
 function savingsView(today) {
@@ -198,7 +198,16 @@ function savingsView(today) {
       h('div', { class: 'card' }, groupedChart(tr)),
       h('table', { class: 'rate-table', id: 'rate-table' }, h('caption', { class: 'sr-only' }, 'Income, spent, saved and savings rate by month'),
         h('thead', {}, h('tr', {}, ['Month', 'Income', 'Spent', 'Saved', 'Rate'].map((c) => h('th', { scope: 'col' }, c)))),
-        h('tbody', {}, [...tr.rows].reverse().map((r) => h('tr', {}, h('th', { scope: 'row' }, monthName(r.month)), h('td', { class: 'num' }, formatCompact(r.income)), h('td', { class: 'num' }, formatCompact(r.spent)), h('td', { class: 'num' }, formatCompact(r.saved)), h('td', { class: 'num strong' }, rateText(r.rate))))))));
+        h('tbody', {}, [...tr.rows].reverse().map((r) => h('tr', {
+          title: 'Tap for the full figures',
+          onclick: (e) => {
+            e.currentTarget.parentElement.querySelectorAll('tr').forEach((row) => row.removeAttribute('aria-selected'));
+            e.currentTarget.setAttribute('aria-selected', 'true');
+            const out = document.getElementById('trend-readout');
+            if (out) out.textContent = `${monthLabel(r.month, { short: true })}: income ${formatINR(r.income)} · spent ${formatINR(r.spent)} · saved ${formatINR(r.saved)} · rate ${rateText(r.rate)}`;
+          },
+        }, h('th', { scope: 'row' }, monthName(r.month)), h('td', { class: 'num' }, formatCompact(r.income)), h('td', { class: 'num' }, formatCompact(r.spent)), h('td', { class: 'num' }, formatCompact(r.saved)), h('td', { class: 'num strong' }, rateText(r.rate))))))),
+      h('p', { class: 'muted small' }, 'Short forms like ₹1.2L keep the table compact: tap a month for the exact amounts.'));
 }
 
 /** Three bars per month (income, spent, saved). A legend names the series; tap a month for its exact figures. */

@@ -1,5 +1,6 @@
 // Goals: savings and investments. Money added here is kept apart from expenses and never counts as spending.
-import { h, icon, sheet, toast, confirmDialog } from '../ui.js';
+import { h, icon, sheet, toast, confirmDialog, badge, chipStyle } from '../ui.js';
+import { iconAndColor } from './picker.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { todayYmd, monthOf, isYmd, longDate, dayLabel, monthLabel } from '../dates.js';
 import { goalSummary, savedInMonth, maxWithdrawal } from '../goals.js';
@@ -25,11 +26,11 @@ export function render() {
     h('p', { class: 'saved-line' }, h('span', { class: 'muted' }, `Saved in ${monthLabel(monthOf(today))}: `), h('strong', { class: 'num', id: 'saved-this-month' }, money(saved)),
       h('span', { class: 'muted small' }, ' · not counted as spending')),
     active.length > 1 ? h('p', { class: 'muted small lede' }, 'Priority is the order below: “Allocate leftover” fills the top goal first. Use the arrows to reorder.') : null,
-    active.length ? h('ul', { class: 'goal-list' }, active.map((g, i) => h('li', {}, goalCard(g, today, i, active.length)))) : emptyState('No goals yet', 'Add one for an emergency fund, a trip, investments…'),
+    active.length ? h('ul', { class: 'goal-list' }, active.map((g, i) => h('li', {}, goalCard(g, today, i, active.length)))) : emptyState('No goals yet', 'Add one for an emergency fund, a trip, investments…', null, 'target'),
     h('button', { class: 'btn btn-wide', type: 'button', id: 'new-goal', onclick: newGoalPicker }, icon('plus'), 'New goal'),
     archived.length ? h('details', { class: 'archived' },
       h('summary', {}, `Archived (${archived.length})`),
-      h('ul', { class: 'plain-list' }, archived.map((g) => h('li', { class: 'plain-row' }, h('span', { class: 'goal-emoji' }, g.emoji || '🎯'), h('span', { class: 'grow' }, g.name),
+      h('ul', { class: 'plain-list' }, archived.map((g) => h('li', { class: 'plain-row' }, badge(g), h('span', { class: 'grow' }, g.name),
         h('button', { class: 'btn btn-small', type: 'button', onclick: async () => { await saveGoal({ ...g, archived: false }); refresh(); toast(`${g.name} is back`); } }, 'Restore'))))) : null);
 }
 
@@ -73,14 +74,13 @@ function goalCard(g, today, i, n) {
   const s = goalSummary(g, state.goalAdds, today);
   return h('article', { class: 'card goal-card', 'aria-label': g.name },
     h('div', { class: 'goal-head' },
-      h('button', { class: 'goal-title', type: 'button', onclick: () => go(`#/goal/${g.id}`), 'aria-label': `${g.name}: open history` }, h('span', { class: 'goal-emoji' }, g.emoji || '🎯'), h('span', {}, g.name)),
-      h('span', { class: 'goal-tools' },
-        n > 1 ? [
-          h('span', { class: 'prio', 'aria-label': `Priority ${i + 1} of ${n}` }, `#${i + 1}`),
-          h('button', { class: 'icon-btn icon-btn-sm', type: 'button', 'aria-label': `Raise priority of ${g.name}`, disabled: i === 0, onclick: async () => { await moveGoal(g.id, -1); refresh(); } }, icon('up')),
-          h('button', { class: 'icon-btn icon-btn-sm', type: 'button', 'aria-label': `Lower priority of ${g.name}`, disabled: i === n - 1, onclick: async () => { await moveGoal(g.id, 1); refresh(); } }, icon('down')),
-        ] : null,
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Edit ${g.name}`, onclick: () => goalSheet(g) }, icon('edit')))),
+      h('button', { class: 'goal-title', type: 'button', onclick: () => go(`#/goal/${g.id}`), 'aria-label': `${g.name}: open history` }, badge(g), h('span', {}, g.name)),
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Edit ${g.name}`, onclick: () => goalSheet(g) }, icon('edit'))),
+    n > 1 ? h('div', { class: 'goal-prio' },
+      h('span', { class: 'prio', 'aria-label': `Priority ${i + 1} of ${n}` }, `#${i + 1}`),
+      h('span', { class: 'muted small grow' }, i === 0 ? 'Top priority' : 'Priority'),
+      h('button', { class: 'icon-btn icon-btn-sm', type: 'button', 'aria-label': `Raise priority of ${g.name}`, disabled: i === 0, onclick: async () => { await moveGoal(g.id, -1); refresh(); } }, icon('up')),
+      h('button', { class: 'icon-btn icon-btn-sm', type: 'button', 'aria-label': `Lower priority of ${g.name}`, disabled: i === n - 1, onclick: async () => { await moveGoal(g.id, 1); refresh(); } }, icon('down'))) : null,
     ...goalFigures(g, s, today),
     h('div', { class: 'btn-row goal-actions' },
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => moneySheet(g, { mode: 'add' }) }, icon('plus'), 'Add money'),
@@ -102,7 +102,7 @@ export const detail = {
     return h('div', { class: 'page goal-detail' },
       h('header', { class: 'page-head' },
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back to Goals', onclick: () => go('#/goals') }, icon('left')),
-        h('h1', {}, `${g.emoji || '🎯'} ${g.name}`),
+        h('h1', {}, badge(g, 'badge badge-small'), h('span', {}, g.name)),
         h('div', { class: 'head-actions' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Edit goal', onclick: () => goalSheet(g) }, icon('edit')), menuButton())),
       h('section', { class: 'card goal-card' },
         ...goalFigures(g, s, today),
@@ -112,7 +112,7 @@ export const detail = {
       h('h2', {}, `Entries (${adds.length})`),
       adds.length ? h('ul', { class: 'entry-list' }, adds.map((a) => h('li', {},
         h('button', { class: 'entry', type: 'button', onclick: () => moneySheet(g, { existing: a }), 'aria-label': `${a.amount < 0 ? 'Withdrawal' : 'Added'} ${money(Math.abs(a.amount))}, ${dayLabel(a.date)}. Edit` },
-          h('span', { class: `badge ${a.amount < 0 ? 'badge-out' : ''}`, style: { '--c': a.amount < 0 ? '#F5B841' : '#3DDC97' }, 'aria-hidden': 'true' }, a.amount < 0 ? '−' : '+'),
+          h('span', { class: 'badge', style: chipStyle(a.amount < 0 ? '#C9A24B' : '#4FAF86'), 'aria-hidden': 'true' }, icon(a.amount < 0 ? 'minus' : 'plus')),
           h('span', { class: 'entry-text' }, h('span', { class: 'entry-cat' }, a.amount < 0 ? 'Withdrawal' : 'Added'),
             h('span', { class: 'entry-note' }, [dayLabel(a.date), bucketName(a.bucketId), a.note].filter(Boolean).join(' · '))),
           h('span', { class: 'entry-amt num' }, money(a.amount, { sign: true })))))) : emptyState('Nothing added yet', 'Use Add money to log the first one.'));
@@ -198,7 +198,7 @@ export function newGoalPicker() {
       return h('li', {}, h('button', {
         class: 'starter', type: 'button', disabled: taken, dataset: { starter: s.name },
         onclick: () => { close(); goalSheet(null, { preset: s }); },
-      }, h('span', { class: 'goal-emoji' }, s.emoji), h('span', { class: 'grow' }, s.name), taken ? h('span', { class: 'muted small' }, 'Added') : icon('right')));
+      }, badge(s), h('span', { class: 'grow' }, s.name), taken ? h('span', { class: 'muted small' }, 'Added') : icon('right')));
     }))));
 }
 
@@ -208,7 +208,7 @@ export function goalSheet(goal, { preset = null } = {}) {
   sheet(goal ? 'Edit goal' : 'New goal', (close) => {
     const err = h('p', { class: 'form-error', role: 'alert' });
     const nameIn = h('input', { class: 'input', id: 'goal-name', maxlength: '40', value: goal?.name ?? (named ? preset.name : ''), placeholder: 'e.g. Emergency fund', autofocus: !named, autocomplete: 'off' });
-    const emojiIn = h('input', { class: 'input emoji-input', id: 'goal-emoji', maxlength: '8', value: goal?.emoji ?? preset?.emoji ?? '', placeholder: '🎯', autocomplete: 'off' });
+    const look = iconAndColor({ icon: goal?.icon ?? preset?.icon ?? 'target', color: goal?.color ?? preset?.color ?? COLORS[state.goals.length % COLORS.length] });
     const targetIn = h('input', { class: 'input num', id: 'goal-target', inputmode: 'decimal', autocomplete: 'off', placeholder: 'No target', autofocus: named, value: goal && goal.target > 0 ? paiseToInput(goal.target) : '' });
     const dateIn = h('input', { class: 'input', id: 'goal-date', type: 'date', value: goal?.targetDate ?? '', 'aria-label': 'Target date (optional)' });
     const planIn = h('input', { class: 'input num', id: 'goal-plan', inputmode: 'decimal', autocomplete: 'off', placeholder: 'None', value: goal && goal.monthlyPlan > 0 ? paiseToInput(goal.monthlyPlan) : '' });
@@ -241,14 +241,15 @@ export function goalSheet(goal, { preset = null } = {}) {
         if (buckets.some((x) => x.name.toLowerCase() === bn.toLowerCase())) { err.textContent = `There are two buckets called “${bn}”.`; return; }
         buckets.push({ id: b.id, name: bn });
       }
-      await saveGoal({ ...goal, name: nm, emoji: [...emojiIn.value.trim()].slice(0, 2).join(''), target, targetDate: dateIn.value || null, monthlyPlan: plan, buckets, archived: goal?.archived ?? false });
+      const { icon: iconKey, color } = look.get();
+      await saveGoal({ ...goal, name: nm, icon: iconKey, color, emoji: goal?.emoji ?? '', target, targetDate: dateIn.value || null, monthlyPlan: plan, buckets, archived: goal?.archived ?? false });
       close();
       refresh();
       toast(goal ? 'Goal updated' : `${nm} added`);
     };
 
     return h('form', { class: 'sheet-body', novalidate: true, onsubmit: (e) => { e.preventDefault(); save(); } },
-      h('div', { class: 'field-grid' }, field('Emoji', emojiIn), h('div', { class: 'grow' }, field('Name', nameIn))),
+      field('Name', nameIn),
       field('Target amount (₹, optional)', targetIn),
       field('Target date (optional)', dateIn, 'With a target and a date, CRUX shows the monthly amount needed.'),
       field('Planned per month (₹, optional)', planIn),
@@ -256,6 +257,7 @@ export function goalSheet(goal, { preset = null } = {}) {
         h('span', { class: 'muted small' }, 'Where the money sits, e.g. Savings account, FD, Liquid fund.'),
         list,
         h('button', { class: 'btn btn-small', type: 'button', id: 'add-bucket', onclick: () => { rows.push({ id: uid(), name: '' }); drawBuckets(); list.lastElementChild?.querySelector('input')?.focus(); } }, icon('plus'), 'Add a bucket')),
+      look.node,
       err,
       h('button', { class: 'btn btn-primary btn-big', type: 'submit', id: 'goal-save' }, goal ? 'Save' : 'Add goal'),
       goal ? h('button', {

@@ -34,7 +34,9 @@ export function render({ query: q }) {
       ? h('div', {}, days.map((d) => h('section', { class: 'day' },
         h('h3', { class: 'day-head' }, h('span', {}, dayLabel(d.date), scopeAll ? ` ${d.date.slice(0, 4)}` : ''), h('span', { class: 'num' }, formatINR(d.total))),
         h('ul', { class: 'entry-list' }, d.entries.map((e) => entryRow(e))))))
-      : emptyState(needle || cat ? 'Nothing matches' : `No expenses in ${monthLabel(month)}`, needle && !scopeAll ? 'Try searching all months.' : null));
+      : needle || cat
+        ? emptyState('Nothing matches', needle && !scopeAll ? 'Try searching all months.' : 'Try another category or clear the filter.', null, 'search')
+        : emptyState(`No expenses in ${monthLabel(month)}`, 'Expenses you add show up here, by day.', h('a', { class: 'btn btn-primary', href: '#/add' }, icon('plus'), 'Add an expense'), 'list'));
     scopeBtn.hidden = !needle;
   };
 
@@ -50,8 +52,8 @@ export function render({ query: q }) {
   const filters = h('div', { class: 'chips chips-scroll', role: 'group', 'aria-label': 'Filter by category' },
     h('button', { class: 'chip chip-small', type: 'button', 'aria-pressed': String(!cat), onclick: () => setQuery({ c: null }) }, 'All'),
     state.categories.filter((c) => !c.archived || state.entries.some((e) => e.categoryId === c.id)).map((c) =>
-      h('button', { class: 'chip chip-small', type: 'button', 'aria-pressed': String(c.id === cat), style: { '--c': c.color }, onclick: () => setQuery({ c: c.id === cat ? null : c.id }) },
-        h('span', { 'aria-hidden': 'true' }, c.emoji || '•'), ` ${c.name}`)));
+      h('button', { class: 'chip chip-small', type: 'button', 'aria-pressed': String(c.id === cat), onclick: () => setQuery({ c: c.id === cat ? null : c.id }) },
+        badge(c, 'badge badge-small'), c.name)));
 
   const page = h('div', { class: 'page history' },
     pageHead('History'),

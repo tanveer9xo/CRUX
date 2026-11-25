@@ -8,6 +8,7 @@ import { SEED_CATEGORIES, SEED_GOALS } from '../seed.js';
 import { install, promptInstall, installHelp, isStandalone, isIOS, checkForUpdate, isPersisted, requestPersistence } from '../pwa.js';
 import { go, refresh } from '../router.js';
 import { pageHead } from './common.js';
+import { getThemePref, setThemePref } from '../theme.js';
 
 export const name = 'settings';
 export const tab = null;
@@ -133,6 +134,15 @@ export function render({ query }) {
         h('button', { class: 'btn', type: 'button', onclick: () => fileInput.click() }, icon('upload'), 'Import')),
       h('p', { class: 'muted small' }, 'Import shows what’s in the file and asks before replacing anything.'),
       fileInput),
+
+    h('section', { class: 'card', 'aria-labelledby': 'h-look' },
+      h('h2', { id: 'h-look' }, 'Appearance'),
+      h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Theme' },
+        [['dark', 'Dark', 'moon'], ['light', 'Light', 'sun'], ['system', 'System', 'monitor']].map(([k, label, ic]) => h('button', {
+          class: 'seg', type: 'button', role: 'radio', id: `theme-${k}`, 'aria-checked': String(getThemePref() === k),
+          onclick: () => { setThemePref(k); refresh(); },
+        }, icon(ic), label))),
+      h('p', { class: 'muted small' }, 'System follows your phone’s light or dark setting.')),
 
     h('section', { class: 'card' },
       h('h2', {}, 'App'),

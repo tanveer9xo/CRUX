@@ -1,4 +1,6 @@
 // DOM helpers. Text always goes in as text nodes (never innerHTML), so names and notes can't inject markup.
+import { iconShapes } from './icons.js';
+import { chipColors } from './color.js';
 // No inline style attributes (the CSP forbids them): colours go through CSS custom properties via CSSOM.
 
 export function h(tag, props = {}, ...children) {
@@ -23,48 +25,17 @@ function append(el, children) {
   }
 }
 
-// Icons: 24×24 stroke paths drawn for CRUX.
-const PATHS = {
-  home: ['M4 11l8-7 8 7', 'M6 9.5V20h12V9.5', 'M10 20v-5h4v5'],
-  list: ['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4.5 6h.01', 'M4.5 12h.01', 'M4.5 18h.01'],
-  plus: ['M12 5v14', 'M5 12h14'],
-  chart: ['M4 20h16', 'M7 16v-5', 'M12 16V7', 'M17 16v-8'],
-  plan: ['M5 4h14v16H5z', 'M9 9h6', 'M9 13h6', 'M9 17h3'],
-  gear: ['M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'],
-  left: ['M15 6l-6 6 6 6'],
-  right: ['M9 6l6 6-6 6'],
-  up: ['M6 15l6-6 6 6'],
-  down: ['M6 9l6 6 6-6'],
-  x: ['M6 6l12 12', 'M18 6L6 18'],
-  check: ['M5 12l5 5L20 7'],
-  trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M5 7l1 13h12l1-13', 'M9 7V4h6v3'],
-  search: ['M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13z', 'M20 20l-4.8-4.8'],
-  more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
-  download: ['M12 4v11', 'M7 10l5 5 5-5', 'M5 20h14'],
-  upload: ['M12 20V9', 'M7 14l5-5 5 5', 'M5 4h14'],
-  refresh: ['M20 11a8 8 0 1 0-2.3 5.7', 'M20 4v7h-7'],
-  archive: ['M4 5h16v4H4z', 'M6 9v10h12V9', 'M10 13h4'],
-  edit: ['M4 20h4L19 9l-4-4L4 16z', 'M13 7l4 4'],
-  shield: ['M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z'],
-  alert: ['M12 4L2.5 20h19z', 'M12 10v4', 'M12 17h.01'],
-  goals: ['M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z', 'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8z', 'M12 12h.01'],
-  bills: ['M5 5h14v15H5z', 'M5 10h14', 'M9 3v4', 'M15 3v4', 'M9 15l2 2 4-4'],
-  menu: ['M4 7h16', 'M4 12h16', 'M4 17h16'],
-  minus: ['M5 12h14'],
-  income: ['M12 4v12', 'M7 11l5 5 5-5', 'M5 20h14'],
-  month: ['M4 6h16v14H4z', 'M4 11h16', 'M9 15h6'],
-};
-
+// Icons come from one registry (js/icons.js). Chips colour themselves for the current theme (js/color.js).
 const NS = 'http://www.w3.org/2000/svg';
 export function icon(name, cls = 'ic') {
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('class', cls);
   svg.setAttribute('aria-hidden', 'true');
-  for (const d of PATHS[name] ?? []) {
-    const p = document.createElementNS(NS, 'path');
-    p.setAttribute('d', d);
-    svg.append(p);
+  for (const [tag, attrs] of iconShapes(name)) {
+    const el = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    svg.append(el);
   }
   return svg;
 }
@@ -76,9 +47,29 @@ export function svgEl(tag, attrs = {}, ...children) {
   return el;
 }
 
-/** Category badge: the emoji on a tint of the category colour. */
-export function badge(cat, cls = 'badge') {
-  return h('span', { class: cls, style: { '--c': cat?.color ?? '#7C8796' }, 'aria-hidden': 'true' }, cat?.emoji || '•');
+export const currentTheme = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+
+/** CSS variables for a chip in a given colour: a muted tint behind, the colour (contrast-adjusted) in front. */
+export function chipStyle(color) {
+  const { bg, fg } = chipColors(/^#[0-9a-fA-F]{6}$/.test(color ?? '') ? color : '#8E97A6', currentTheme());
+  return { '--chip-bg': bg, '--chip-fg': fg };
+}
+
+/** A category, goal or bill type as its icon in a rounded-square chip tinted with its colour. */
+export function badge(item, cls = 'badge') {
+  return h('span', { class: cls, style: chipStyle(item?.color), 'aria-hidden': 'true' }, icon(item?.icon || 'tag'));
+}
+
+/** A progress ring. pct may exceed 100 (over budget); the meter animates in from empty. */
+export function ring(pct, status, { label, sub } = {}) {
+  const R = 44;
+  const C = 2 * Math.PI * R;
+  const meter = svgEl('circle', { class: 'meter', cx: 50, cy: 50, r: R, 'stroke-dasharray': C.toFixed(2), 'stroke-dashoffset': C.toFixed(2) });
+  const target = C * (1 - Math.max(0, Math.min(100, pct ?? 0)) / 100);
+  requestAnimationFrame(() => requestAnimationFrame(() => meter.setAttribute('stroke-dashoffset', target.toFixed(2))));
+  return h('div', { class: `ring st-${status}`, role: 'img', 'aria-label': `${pct ?? 0}% of the budget used` },
+    svgEl('svg', { viewBox: '0 0 100 100' }, svgEl('circle', { class: 'track', cx: 50, cy: 50, r: R }), meter),
+    h('div', { class: 'ring-label', 'aria-hidden': 'true' }, h('span', { class: 'ring-pct num' }, label ?? `${pct ?? 0}%`), sub ? h('span', { class: 'ring-sub' }, sub) : null));
 }
 
 // ---- toasts (one at a time; an action button such as Undo keeps it up longer) ----
@@ -143,11 +134,12 @@ export function confirmDialog({ title, body, ok = 'OK', danger = false }) {
   });
 }
 
-/** A progress bar whose colour follows the budget state; the state is also spoken and written. */
-export function bar(status, pct, color) {
+/** A progress bar whose colour follows the budget state (the state is also written beside it). Animates in. */
+export function bar(status, pct) {
   const w = Math.max(0, Math.min(100, pct ?? (status === 'over' ? 100 : 0)));
-  return h('div', { class: `bar bar-${status}`, style: color ? { '--c': color } : undefined },
-    h('div', { class: 'bar-fill', style: { width: `${w}%` } }));
+  const fill = h('div', { class: 'bar-fill' });
+  requestAnimationFrame(() => requestAnimationFrame(() => fill.style.setProperty('width', `${w}%`)));
+  return h('div', { class: `bar bar-${status}` }, fill);
 }
 
 export const statusText = { ok: '', warn: 'Nearly used', over: 'Over budget' };

@@ -5,7 +5,8 @@ import { todayYmd, monthOf } from './dates.js';
 import { rollover, setBudget as setBudgetPure, budgetsFor } from './budget.js';
 import { buildBackup } from './backup.js';
 import { byNewest } from './insights.js';
-import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS } from './seed.js';
+import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS, withIcon } from './seed.js';
+import { hasIcon } from './icons.js';
 import { markPaid as billMarkPaid, skipOne as billSkipOne, sweepEnded } from './bills.js';
 import { receiveIncome, skipSource as skipIncomeSource } from './income.js';
 
@@ -56,6 +57,7 @@ export async function init() {
   sortGoals();
   sortAdds();
   sortIncome();
+  await migrateIcons();
   if (!categories.length && !(await db.getMeta('seeded'))) await seed();
   // Goals are seeded once per device, including on an upgrade from 1.0.x (which only adds them; nothing is removed).
   if (!(await db.getMeta('goalsSeeded'))) await seedGoals();
@@ -63,7 +65,7 @@ export async function init() {
 }
 
 function starterGoals(now) {
-  return SEED_GOALS.map(({ name, emoji }, i) => ({ id: uid(), name, emoji, target: 0, targetDate: null, monthlyPlan: 0, buckets: [], archived: false, order: i, createdAt: now }));
+  return SEED_GOALS.map(({ name, icon, emoji, color }, i) => ({ id: uid(), name, icon, emoji, color, target: 0, targetDate: null, monthlyPlan: 0, buckets: [], archived: false, order: i, createdAt: now }));
 }
 
 async function seedGoals() {
@@ -73,9 +75,28 @@ async function seedGoals() {
   state.goals = goals;
 }
 
+/**
+ * 1.3.0: categories and goals that only had an emoji get an icon key (by name; unmatched → "tag"), and goals a colour.
+ * The emoji stays in each record, and existing colours are untouched. Idempotent: runs on every start, writes only
+ * what changed, in one transaction.
+ */
+async function migrateIcons() {
+  const cats = state.categories.map((c, i) => withIcon(c, { valid: hasIcon, index: i }));
+  const goals = state.goals.map((g, i) => withIcon(g, { valid: hasIcon, index: i }));
+  const ops = [
+    ...cats.filter((c, i) => c !== state.categories[i]).map((c) => ({ store: 'categories', put: c })),
+    ...goals.filter((g, i) => g !== state.goals[i]).map((g) => ({ store: 'goals', put: g })),
+  ];
+  if (!ops.length) return 0;
+  await db.write(ops);
+  state.categories = cats;
+  state.goals = goals;
+  return ops.length;
+}
+
 function starterData(month) {
   const now = Date.now();
-  const cats = SEED_CATEGORIES.map(({ name, emoji, color }, i) => ({ id: uid(), name, emoji, color, order: i, archived: false, createdAt: now }));
+  const cats = SEED_CATEGORIES.map(({ name, icon, emoji, color }, i) => ({ id: uid(), name, icon, emoji, color, order: i, archived: false, createdAt: now }));
   const plan = Object.fromEntries(cats.map((c) => [c.id, SEED_BUDGET]));
   return { now, cats, plan };
 }
@@ -135,8 +156,8 @@ async function commitBudgets(next, changedFrom) {
 /** Set a category's budget from `month` onward; earlier months keep theirs. */
 export const setBudget = (month, categoryId, paise) => commitBudgets(setBudgetPure(state.budgets, month, categoryId, paise), month);
 
-export async function addCategory({ name, emoji, color, budget }, month) {
-  const cat = { id: uid(), name, emoji, color, order: Math.max(-1, ...state.categories.map((c) => c.order)) + 1, archived: false, createdAt: Date.now() };
+export async function addCategory({ name, icon, color, budget }, month) {
+  const cat = { id: uid(), name, icon: icon ?? 'tag', emoji: '', color, order: Math.max(-1, ...state.categories.map((c) => c.order)) + 1, archived: false, createdAt: Date.now() };
   await db.put('categories', cat);
   state.categories.push(cat);
   sortCats();

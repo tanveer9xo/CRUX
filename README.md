@@ -52,6 +52,18 @@ Your data stays in this browser's IndexedDB on your device.
 
 Amounts are stored as whole paise (integers), never as floating-point rupees. They are shown in INR with Indian digit grouping (₹1,25,000).
 
+## Look and feel
+
+- **Design system:** every colour, size, radius, shadow and duration comes from CSS tokens at the top of
+  `css/app.css`. Dark is the default; Settings → Appearance offers Light and System. A test reads the tokens and checks
+  WCAG AA contrast for text and the amber/red/green states in both themes.
+- **Icons:** one monoline SVG set (`js/icons.js`, paths from Lucide under the ISC licence: see `NOTICE`). Categories,
+  goals and bill types show their icon in a rounded chip tinted with their colour; the icon colour is adjusted per theme
+  only as far as contrast needs, and stored colours never change. No emoji is displayed anywhere (a test scans every
+  rendered screen). Category and goal editors have an icon picker with search and colour swatches.
+- **Upgrading to 1.3.0:** categories and goals gain an icon key, by exact name (anything unmatched gets "tag"); the old
+  emoji stays in the data, so older versions and backups still work.
+
 ## Navigation
 
 The tab bar is Home, History, **+**, Goals, Bills. Month plan, Income, Insights, Plan and Settings are in the menu (☰)
@@ -70,6 +82,7 @@ imports and keeps whatever it doesn't carry (goals and bills, income) exactly as
 npm start            # http://localhost:8080
 npm test             # unit tests (money, dates, budgets, goals, bills, backup, release checks), in several time zones
 npm run test:browser # headless Chrome: the built site served under /CRUX/, end to end
+npm run test:screens # every screen at 360/390/430 px in dark and light: overflow, 44px targets, no emoji (SHOTS=dir saves PNGs)
 npm run icons        # re-render icons from js/brand.js
 ```
 

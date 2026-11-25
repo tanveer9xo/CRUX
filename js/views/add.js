@@ -1,5 +1,5 @@
 // Quick add / edit. Three taps: + (opens with the amount field focused), a category chip, Save.
-import { h, icon, toast, confirmDialog } from '../ui.js';
+import { h, icon, toast, confirmDialog, badge } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { todayYmd, addDays, isYmd } from '../dates.js';
 import { state, saveEntry, deleteEntry, restoreEntry, activeCategories, catById, restoreBill } from '../store.js';
@@ -44,16 +44,15 @@ export function render({ params }) {
   });
   err.id = 'amount-err';
 
-  const chips = h('div', { class: 'chips', role: 'radiogroup', 'aria-label': 'Category' },
+  const chips = h('div', { class: 'chips cat-grid', role: 'radiogroup', 'aria-label': 'Category' },
     cats.map((c) => h('button', {
       class: 'chip', type: 'button', role: 'radio', 'aria-checked': String(c.id === selected), dataset: { id: c.id },
-      style: { '--c': c.color },
       onclick: (e) => {
         selected = c.id;
         err.textContent = '';
         chips.querySelectorAll('.chip').forEach((b) => b.setAttribute('aria-checked', String(b === e.currentTarget)));
       },
-    }, h('span', { class: 'chip-emoji', 'aria-hidden': 'true' }, c.emoji || '•'), h('span', {}, c.name))));
+    }, badge(c, 'badge badge-small'), h('span', { class: 'chip-label' }, c.name.split('/').flatMap((part, i) => (i ? ['/', h('wbr'), part] : [part]))), icon('check', 'ic ic-sm chip-check'))));
 
   const date = h('input', { id: 'date', type: 'date', class: 'input', value: editing?.date ?? today, required: true, onchange: () => syncDay() });
   const dayBtns = [['Today', today], ['Yesterday', addDays(today, -1)]].map(([label, d]) =>

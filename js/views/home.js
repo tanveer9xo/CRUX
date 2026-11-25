@@ -1,5 +1,5 @@
 // Home: this month's spend against the plan, a bar per category, the latest entries.
-import { h, icon, badge, bar, statusText } from '../ui.js';
+import { h, icon, badge, bar, ring, statusText } from '../ui.js';
 import { needingAttention } from '../bills.js';
 import { goalSummary } from '../goals.js';
 import { needingConfirmation } from '../income.js';
@@ -35,22 +35,29 @@ export function render() {
       h('div', {}, h('p', { class: 'eyebrow' }, 'CRUX'), h('h1', {}, monthName(month, false))),
       menuButton()),
 
+    // 1. The month at a glance: spent against budget, a ring, and what's left per day.
+    h('section', { class: 'card hero', 'aria-label': 'This month' },
+      h('div', { class: 'summary' },
+        t.budget > 0 ? ring(t.pct ?? 0, t.status, { sub: 'used' }) : null,
+        h('div', { class: 'summary-text' },
+          h('p', { class: 'muted small' }, 'Spent this month'),
+          h('p', { class: 'hero-amt num' }, formatINR(t.spent)),
+          h('p', { class: 'muted' }, t.budget > 0 ? ['of ', h('span', { class: 'num strong' }, formatINR(t.budget)), ' budget'] : 'No budget set yet'))),
+      h('p', { class: `hero-foot ${t.status}` },
+        t.budget === 0
+          ? ['Set budgets in ', h('a', { href: '#/plan' }, 'Plan'), ' to see what’s left each day.']
+          : t.remaining >= 0
+            ? [h('span', { class: 'num strong' }, formatINR(t.remaining)), ' left · ', h('span', { class: 'num' }, formatINR(dailyAllowance(t.remaining, today), { decimals: 'never' })), `/day for ${left} day${left === 1 ? '' : 's'}`]
+            : [icon('alert', 'ic ic-inline'), h('span', { class: 'num strong' }, formatINR(-t.remaining)), ` over your ${formatINR(t.budget, { decimals: 'never' })} budget`])),
+    insightsLink(today),
     backupBanner(),
+
+    // 2. What needs attention: bills due and income expected.
     upcomingCard(today),
     incomeExpectedCard(today),
 
-    h('section', { class: 'card hero', 'aria-label': 'This month' },
-      h('p', { class: 'muted small' }, 'Spent this month'),
-      h('p', { class: 'hero-amt num' }, formatINR(t.spent)),
-      h('p', { class: 'muted' }, 'of ', h('span', { class: 'num strong' }, formatINR(t.budget)), ' budget', t.pct !== null ? ` · ${t.pct}%` : ''),
-      bar(t.status, t.pct),
-      h('p', { class: `hero-foot ${t.status}` },
-        t.remaining >= 0
-          ? [h('span', { class: 'num strong' }, formatINR(t.remaining)), ' left · ', h('span', { class: 'num' }, formatINR(dailyAllowance(t.remaining, today), { decimals: 'never' })), `/day for ${left} day${left === 1 ? '' : 's'}`]
-          : [icon('alert', 'ic ic-inline'), h('span', { class: 'num strong' }, formatINR(-t.remaining)), ' over budget'])),
-
+    // 3. The plan, goals, categories and the latest entries.
     monthPlanCard(today),
-    insightsLink(today),
     goalsStrip(today),
 
     h('section', { 'aria-labelledby': 'h-cats' },
@@ -59,18 +66,18 @@ export function render() {
         ? h('ul', { class: 'cat-list' },
           rows.map((r) => catRow(r, month)),
           p.unplanned.map((u) => catRow({ ...u, budget: 0, remaining: -u.spent, pct: null, status: 'over', unplanned: true }, month)))
-        : emptyState('No categories yet', 'Add categories and budgets in Plan.', h('a', { class: 'btn', href: '#/plan' }, 'Open Plan'))),
+        : emptyState('No categories yet', 'Add categories and budgets in Plan.', h('a', { class: 'btn btn-primary', href: '#/plan' }, 'Open Plan'), 'clipboard-list')),
 
     h('section', { 'aria-labelledby': 'h-recent' },
       h('div', { class: 'section-head' }, h('h2', { id: 'h-recent' }, 'Recent'), state.entries.length ? h('a', { href: '#/history', class: 'link' }, 'See all') : null),
       state.entries.length
         ? h('ul', { class: 'entry-list' }, state.entries.slice(0, 5).map((e) => entryRow(e, { showDate: true })))
-        : emptyState('No expenses yet', 'Tap + below to add your first one. It takes three taps.')));
+        : emptyState('No expenses yet', 'Your latest expenses show up here.', h('a', { class: 'btn btn-primary', href: '#/add' }, icon('plus'), 'Add your first expense'), 'list')));
 }
 
 function catRow(r, month) {
   const cat = catById(r.categoryId);
-  const label = r.unplanned ? 'Not in plan' : r.remaining >= 0 ? `${formatINR(r.remaining, { decimals: 'never' })} left` : `${formatINR(-r.remaining, { decimals: 'never' })} over`;
+  const label = r.unplanned ? 'Spent without a budget' : r.remaining >= 0 ? `${formatINR(r.remaining, { decimals: 'never' })} left` : `${formatINR(-r.remaining, { decimals: 'never' })} over`;
   return h('li', {},
     h('button', {
       class: `cat-row st-${r.status}`, type: 'button',
@@ -130,7 +137,7 @@ function goalsStrip(today) {
     h('ul', { class: 'strip-list' }, shown.map((g) => {
       const s = goalSummary(g, state.goalAdds, today);
       return h('li', {}, h('a', { class: 'strip-row', href: `#/goal/${g.id}`, 'aria-label': `${g.name}: ${formatINR(s.saved)}${s.targeted ? ` of ${formatINR(s.target)}, ${s.pct}%` : ', no target'}` },
-        h('span', { class: 'strip-top' }, h('span', { class: 'strip-name' }, g.emoji || '🎯', ' ', g.name),
+        h('span', { class: 'strip-top' }, h('span', { class: 'strip-name' }, badge(g, 'badge badge-small'), h('span', {}, g.name)),
           h('span', { class: 'num strip-amt' }, formatINR(s.saved, { decimals: 'never' }), s.targeted ? h('span', { class: 'muted' }, ` / ${formatINR(s.target, { decimals: 'never' })}`) : null)),
         s.targeted ? h('div', { class: `bar bar-thin ${s.reached ? 'bar-done' : ''}` }, h('div', { class: 'bar-fill', style: { width: `${Math.min(100, s.pct)}%` } })) : h('span', { class: 'muted small' }, 'No target set')));
     })));

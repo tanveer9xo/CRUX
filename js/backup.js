@@ -3,6 +3,8 @@
 
 import { isPaise, isSignedPaise } from './money.js';
 import { BILL_TYPES, RECURRENCES } from './bills.js';
+import { withIcon } from './seed.js';
+import { hasIcon } from './icons.js';
 import { isYmd, isMonth } from './dates.js';
 import { APP_VERSION, SCHEMA_VERSION } from './version.js';
 
@@ -53,15 +55,16 @@ export function parseBackup(text) {
   for (const [i, c] of raw.categories.entries()) {
     if (!c || !ID.test(c.id) || catIds.has(c.id) || !str(c.name).trim()) return { ok: false, error: `Category ${i + 1} is damaged.` };
     catIds.add(c.id);
-    categories.push({
+    categories.push(withIcon({
       id: c.id,
       name: str(c.name, 40).trim(),
+      icon: typeof c.icon === 'string' && hasIcon(c.icon) ? c.icon : undefined, // older backups: mapped by name below
       emoji: str(c.emoji, 16),
       color: COLOR.test(c.color) ? c.color : '#7C8796',
       order: Number.isFinite(c.order) ? c.order : i,
       archived: c.archived === true,
       createdAt: Number.isFinite(c.createdAt) ? c.createdAt : 0,
-    });
+    }, { valid: hasIcon, index: i }));
   }
 
   const budgets = {};
@@ -151,9 +154,11 @@ function parseGoalData(raw, catIds) {
     }
     goalIds.add(g.id);
     bucketIds.set(g.id, ids);
-    goals.push({
+    goals.push(withIcon({
       id: g.id,
       name: str(g.name, 40).trim(),
+      icon: typeof g.icon === 'string' && hasIcon(g.icon) ? g.icon : undefined,
+      color: COLOR.test(g.color) ? g.color : undefined,
       emoji: str(g.emoji, 16),
       target,
       targetDate: date,
@@ -162,7 +167,7 @@ function parseGoalData(raw, catIds) {
       archived: g.archived === true,
       order: Number.isFinite(g.order) ? g.order : i,
       createdAt: Number.isFinite(g.createdAt) ? g.createdAt : 0,
-    });
+    }, { valid: hasIcon, index: i }));
   }
 
   const goalAdds = [];

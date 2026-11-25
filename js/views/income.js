@@ -16,7 +16,7 @@ export const tab = null;
 export const title = 'Income';
 
 const money = (v, o) => formatINR(v, { decimals: 'auto', ...o });
-const INCOME = { emoji: '💰', color: '#3DDC97' };
+const INCOME = { icon: 'banknote', color: '#4FAF86' };
 const SUGGESTED = ['Salary', 'Bonus', 'Other'];
 const ordinal = (n) => { const v = n % 100; const sfx = ['th', 'st', 'nd', 'rd']; return n + (sfx[(v - 20) % 10] || sfx[v] || sfx[0]); };
 

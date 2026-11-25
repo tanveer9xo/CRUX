@@ -4,6 +4,7 @@ import { register, start, go, refresh } from './router.js';
 import { registerServiceWorker } from './pwa.js';
 import { todayYmd } from './dates.js';
 import { h, toast } from './ui.js';
+import { applyTheme, watchSystemTheme } from './theme.js';
 import * as home from './views/home.js';
 import * as add from './views/add.js';
 import * as historyView from './views/history.js';
@@ -14,6 +15,9 @@ import * as bills from './views/bills.js';
 import * as income from './views/income.js';
 import * as month from './views/month.js';
 import * as settings from './views/settings.js';
+
+applyTheme(); // boot.js already set it before paint; this keeps the theme-color meta and data attributes in step
+watchSystemTheme(() => refresh());
 
 register('/', home);
 register('/add', add);

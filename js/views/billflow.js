@@ -17,7 +17,7 @@ export function billRow(b, today, { onOpen } = {}) {
       class: 'bill-main', type: 'button', onclick: () => (onOpen ? onOpen(b) : go('#/bills')),
       'aria-label': `${b.name}, ${dueText(b, today)}, ${amount}${left}`,
     },
-    badge({ emoji: t.emoji, color: t.color }),
+    badge({ icon: t.icon, color: t.color }),
     h('span', { class: 'bill-text' },
       h('span', { class: 'bill-name' }, b.name),
       h('span', { class: `bill-sub ${st.state}` }, dueText(b, today)),

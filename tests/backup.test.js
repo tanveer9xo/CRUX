@@ -5,13 +5,13 @@ import { buildBackup, parseBackup, needsBackupReminder } from '../js/backup.js';
 
 const DAY = 86_400_000;
 const sample = () => ({
-  categories: [{ id: 'food', name: 'Groceries', emoji: '🛒', color: '#3DDC97', order: 0, archived: false, createdAt: 1 }],
+  categories: [{ id: 'food', name: 'Groceries', icon: 'shopping-basket', emoji: '🛒', color: '#3DDC97', order: 0, archived: false, createdAt: 1 }],
   budgets: { '2026-11': { food: 800000 } },
   entries: [{ id: 'e1', amount: 25050, categoryId: 'food', date: '2026-11-24', note: 'veg', createdAt: 2, updatedAt: 2 }],
   goals: [{
-    id: 'g1', name: 'Emergency fund', emoji: '🛟', target: 5000000, targetDate: '2027-12-31', monthlyPlan: 200000,
+    id: 'g1', name: 'Emergency fund', icon: 'shield', color: '#4FA9C4', emoji: '🛟', target: 5000000, targetDate: '2027-12-31', monthlyPlan: 200000,
     buckets: [{ id: 'b1', name: 'Savings account' }, { id: 'b2', name: 'FD' }], archived: false, order: 0, createdAt: 3,
-  }, { id: 'g2', name: 'Long-term investments', emoji: '📈', target: 0, targetDate: null, monthlyPlan: 0, buckets: [], archived: true, order: 1, createdAt: 4 }],
+  }, { id: 'g2', name: 'Long-term investments', icon: 'piggy-bank', color: '#6B8FD6', emoji: '📈', target: 0, targetDate: null, monthlyPlan: 0, buckets: [], archived: true, order: 1, createdAt: 4 }],
   goalAdds: [
     { id: 'a1', goalId: 'g1', amount: 300000, date: '2026-11-02', note: 'bonus', bucketId: 'b2', createdAt: 5 },
     { id: 'a2', goalId: 'g1', amount: -50000, date: '2026-11-10', note: 'repair', bucketId: 'b1', createdAt: 6 },
@@ -206,4 +206,20 @@ test('income text is trimmed to size; a last-day source always imports with anch
   c.incomeSources[0].lastDay = false;
   delete c.incomeSources[0].anchorDay;
   assert.equal(parseBackup(JSON.stringify(c)).data.incomeSources[0].anchorDay, 31); // from nextDate 2026-12-31
+});
+
+test('backups from before icons (1.0.2, 1.1.1) get the same icon mapping on import; the emoji is kept', () => {
+  const a = parseBackup(readFileSync(new URL('./fixtures/backup-1.0.2.json', import.meta.url), 'utf8'));
+  assert.deepEqual(a.data.categories.map((c) => [c.name, c.icon, c.emoji, c.color]), [['Rent', 'home', '🏠', '#3987E5'], ['Groceries', 'shopping-basket', '🛒', '#199E70'], ['Old category', 'tag', '📦', '#7C8796']]);
+  const b = parseBackup(readFileSync(new URL('./fixtures/backup-1.1.1.json', import.meta.url), 'utf8'));
+  assert.deepEqual(b.data.goals.map((g) => [g.name, g.icon, g.emoji]), [['Emergency fund', 'shield', '🛟'], ['Wedding fund', 'gem', '💍']]);
+  assert.ok(b.data.goals.every((g) => /^#[0-9A-F]{6}$/i.test(g.color)));
+});
+
+test('an exported icon key is kept, and an unknown one is replaced by the default for the name', () => {
+  const r = parseBackup(JSON.stringify(buildBackup(sample())));
+  assert.equal(r.data.goals[1].icon, 'piggy-bank'); // a user's own choice survives (not reset to trending-up)
+  const b = buildBackup(sample());
+  b.categories[0].icon = 'not-an-icon';
+  assert.equal(parseBackup(JSON.stringify(b)).data.categories[0].icon, 'shopping-basket');
 });

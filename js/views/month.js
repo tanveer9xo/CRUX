@@ -1,6 +1,6 @@
 // Month plan: income − category budgets − planned goal contributions = unassigned, and the leftover you can allocate.
 // Allocating records goal entries in CRUX. It does not move real money.
-import { h, icon, sheet, toast } from '../ui.js';
+import { h, icon, sheet, toast, badge } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { todayYmd, monthOf, isMonth, addMonths, monthLabel } from '../dates.js';
 import { totalBudget } from '../budget.js';
@@ -41,7 +41,7 @@ export function render({ query }) {
       h('p', { class: 'muted small ind' }, `Received so far ${money(p.received)}`, inc.pending > 0 ? ` · ${money(inc.pending)} still expected` : ''),
       line('Category budgets', money(p.budgetTotal), 'minus', h('a', { class: 'link', href: '#/plan' }, 'Plan')),
       line('Planned for goals', money(p.goalPlanTotal), 'minus', h('a', { class: 'link', href: '#/goals' }, 'Goals')),
-      goalsPlanned.length ? h('ul', { class: 'ind small muted plan-goals' }, goalsPlanned.map((g) => h('li', {}, `${g.emoji || '🎯'} ${g.name}: ${money(g.monthlyPlan)}`))) : null,
+      goalsPlanned.length ? h('ul', { class: 'ind small muted plan-goals' }, goalsPlanned.map((g) => h('li', {}, badge(g, 'badge badge-small'), `${g.name}: ${money(g.monthlyPlan)}`))) : null,
       h('div', { class: `result ${p.over ? 'warn' : ''}`, id: 'unassigned' },
         p.over ? [icon('alert', 'ic ic-inline'), h('span', {}, 'Over-planned by '), h('strong', { class: 'num' }, money(p.overBy))]
           : [h('span', {}, 'Unassigned '), h('strong', { class: 'num' }, money(p.unassigned))]),
@@ -92,7 +92,7 @@ export function allocateSheet() {
       return { g, input, bucket, node: h('li', { class: 'alloc-row' },
         h('div', { class: 'alloc-top' },
           h('span', { class: 'prio', 'aria-label': `Priority ${i + 1}` }, `#${i + 1}`),
-          h('span', { class: 'alloc-name' }, g.emoji || '🎯', ' ', g.name),
+          h('span', { class: 'alloc-name' }, badge(g, 'badge badge-small'), h('span', {}, g.name)),
           h('span', { class: 'alloc-amt' }, h('span', { class: 'rupee-sm', 'aria-hidden': 'true' }, '₹'), input)),
         h('p', { class: 'muted small ind' }, g.monthlyPlan > 0 ? `Planned ${money(g.monthlyPlan)} a month · ${money(left)} still to plan this month` : 'No monthly plan: enter any amount'),
         bucket) };

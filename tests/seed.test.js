@@ -13,8 +13,8 @@ test('every seed budget is ₹0, so no real amounts live in the repo', () => {
   assert.equal(SEED_BUDGET, 0);
 });
 
-test('each category has its own emoji and its own colour', () => {
-  assert.equal(new Set(SEED_CATEGORIES.map((c) => c.emoji)).size, 18);
+test('each category has its own icon and its own colour', () => {
+  assert.equal(new Set(SEED_CATEGORIES.map((c) => c.icon)).size, 18);
   assert.equal(new Set(SEED_CATEGORIES.map((c) => c.color.toLowerCase())).size, 18);
   for (const c of SEED_CATEGORIES) assert.match(c.color, /^#[0-9A-Fa-f]{6}$/);
   assert.deepEqual(COLORS, SEED_CATEGORIES.map((c) => c.color));
@@ -27,7 +27,7 @@ test('names fit the 40-character category limit', () => {
 test('three starter goals, in order, with no targets (₹0): real targets are entered in the app', () => {
   assert.deepEqual(SEED_GOALS.map((g) => g.name), ['Emergency fund', 'Wedding fund', 'Long-term investments']);
   for (const g of SEED_GOALS) assert.ok(!('target' in g) && !('amount' in g), 'no amounts in the seed');
-  assert.equal(new Set(SEED_GOALS.map((g) => g.emoji)).size, 3);
+  assert.equal(new Set(SEED_GOALS.map((g) => g.icon)).size, 3);
 });
 
 test('the goal picker offers the five suggested starters, none of which is a seeded goal', () => {

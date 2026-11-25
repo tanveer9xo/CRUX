@@ -24,20 +24,22 @@ export function entryRow(e, { showDate = false } = {}) {
     h('button', { class: 'entry', type: 'button', onclick: () => go(`#/entry/${e.id}`), 'aria-label': `${formatINR(e.amount)}, ${name}${sub ? `, ${sub}` : ''}. Edit` },
       badge(cat),
       h('span', { class: 'entry-text' }, h('span', { class: 'entry-cat' }, name), sub && h('span', { class: 'entry-note' }, sub)),
-      h('span', { class: 'entry-amt num' }, formatINR(e.amount))));
+      h('span', { class: 'entry-amt num' }, formatINR(e.amount)),
+      icon('right', 'ic chev')));
 }
 
-/** "▲ 12%" style change pill. More spending reads as amber, less as green; always with an arrow and words. */
+/** An "up 12%" style change pill. More spending reads as amber, less as green; always with an arrow and words. */
 export function deltaPill(pct, diff) {
   if (pct === null) return h('span', { class: 'pill pill-new', title: 'Nothing to compare with last month' }, 'New');
   if (diff === 0) return h('span', { class: 'pill pill-flat' }, 'Same');
   const up = diff > 0;
   return h('span', { class: `pill ${up ? 'pill-up' : 'pill-down'}`, 'aria-label': `${Math.abs(pct)}% ${up ? 'more' : 'less'}` },
-    up ? '▲' : '▼', ` ${Math.abs(pct)}%`);
+    icon(up ? 'arrow-up' : 'arrow-down'), `${Math.abs(pct)}%`);
 }
 
-export function emptyState(title, text, action) {
-  return h('div', { class: 'empty' }, h('p', { class: 'empty-title' }, title), text && h('p', { class: 'muted' }, text), action);
+/** A friendly empty state: an icon, what's missing, and (where there is one) the single next action. */
+export function emptyState(title, text, action, iconName = 'info') {
+  return h('div', { class: 'empty' }, icon(iconName, 'ic empty-icon'), h('p', { class: 'empty-title' }, title), text && h('p', { class: 'muted' }, text), action);
 }
 
 const MENU = [

@@ -1,5 +1,5 @@
 // Bills & renewals: what's due, sorted by due date, with overdue / due soon / later states. In-app only.
-import { h, icon, sheet, toast, confirmDialog } from '../ui.js';
+import { h, icon, sheet, toast, confirmDialog, badge } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { todayYmd, isYmd, longDate } from '../dates.js';
 import {
@@ -29,12 +29,12 @@ export function render() {
       ? GROUPS.map(([k, label]) => (by(k).length ? h('section', { class: `bill-group g-${k}`, 'aria-label': label },
         h('h2', {}, label, h('span', { class: 'count' }, ` ${by(k).length}`)),
         h('ul', { class: 'bill-list' }, by(k).map((b) => billRow(b, today, { onOpen: billSheet })))) : null))
-      : emptyState('No bills or renewals yet', 'Add credit card dues, EMIs, insurance and subscriptions to see what’s coming up.'),
+      : emptyState('No bills or renewals yet', 'Add credit card dues, EMIs, insurance and subscriptions to see what’s coming up.', null, 'calendar-check'),
     h('button', { class: 'btn btn-wide', type: 'button', id: 'new-bill', onclick: () => billForm(null) }, icon('plus'), 'New bill or renewal'),
     archived.length ? h('details', { class: 'archived' },
       h('summary', {}, `Finished & archived (${archived.length})`),
       h('ul', { class: 'plain-list' }, archived.sort(byDue).reverse().map((b) => h('li', { class: 'plain-row' },
-        h('span', { class: 'badge', style: { '--c': typeInfo(b.type).color }, 'aria-hidden': 'true' }, typeInfo(b.type).emoji),
+        badge({ icon: typeInfo(b.type).icon, color: typeInfo(b.type).color }),
         h('span', { class: 'grow' }, h('span', { class: 'bill-name' }, b.name), h('span', { class: 'bill-sub muted' }, ARCHIVE_REASONS[b.archivedReason] ?? 'Archived')),
         h('button', { class: 'btn btn-small', type: 'button', onclick: () => billForm(b, { restoring: true }) }, 'Restore'))))) : null);
 }
@@ -51,7 +51,7 @@ function billSheet(b) {
     b.installmentsLeft !== null && b.installmentsLeft !== undefined ? ['Instalments left', String(b.installmentsLeft)] : null,
     b.endDate ? ['Ends', longDate(b.endDate)] : null,
     ['Warns', `${b.warnDays} day${b.warnDays === 1 ? '' : 's'} before`],
-    cat ? ['Category', `${cat.emoji} ${cat.name}`] : null,
+    cat ? ['Category', cat.name] : null,
     ['When paid', b.logExpense ? 'Offers to log an expense' : 'Doesn’t log an expense'],
     b.note ? ['Note', b.note] : null,
   ].filter(Boolean);
@@ -100,7 +100,7 @@ export function billForm(bill, { restoring = false } = {}) {
     const noteIn = h('input', { class: 'input', id: 'bill-note', maxlength: '200', value: bill?.note ?? '', placeholder: 'Optional', enterkeyhint: 'done' });
     const catIn = h('select', { class: 'input', id: 'bill-cat', 'aria-label': 'Linked category' },
       h('option', { value: '' }, 'None'),
-      [...activeCategories(), ...(bill?.categoryId && catById(bill.categoryId)?.archived ? [catById(bill.categoryId)] : [])].map((c) => h('option', { value: c.id, selected: c.id === bill?.categoryId }, `${c.emoji} ${c.name}`)));
+      [...activeCategories(), ...(bill?.categoryId && catById(bill.categoryId)?.archived ? [catById(bill.categoryId)] : [])].map((c) => h('option', { value: c.id, selected: c.id === bill?.categoryId }, c.name)));
     const logIn = h('input', { type: 'checkbox', id: 'bill-log', checked: logExpense, onchange: () => { logExpense = logIn.checked; logTouched = true; } });
 
     const typeChips = h('div', { class: 'chips', role: 'radiogroup', 'aria-label': 'Type' });
@@ -112,13 +112,13 @@ export function billForm(bill, { restoring = false } = {}) {
 
     const draw = () => {
       typeChips.replaceChildren(...BILL_TYPES.map((t) => h('button', {
-        class: 'chip chip-small', type: 'button', role: 'radio', 'aria-checked': String(t.id === type), dataset: { type: t.id }, style: { '--c': t.color },
+        class: 'chip chip-small', type: 'button', role: 'radio', 'aria-checked': String(t.id === type), dataset: { type: t.id },
         onclick: () => {
           type = t.id;
           if (!logTouched) { logExpense = defaultLogExpense(type); logIn.checked = logExpense; } // card dues default to off
           draw();
         },
-      }, h('span', { 'aria-hidden': 'true' }, t.emoji), ` ${t.label}`)));
+      }, badge({ icon: t.icon, color: t.color }, 'badge badge-small'), t.label)));
       recChips.replaceChildren(...RECURRENCES.map((r) => h('button', {
         class: 'chip chip-small', type: 'button', role: 'radio', 'aria-checked': String(r.id === recurrence), dataset: { rec: r.id },
         onclick: () => { recurrence = r.id; draw(); },

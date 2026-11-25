@@ -10,12 +10,12 @@
 import { addMonthsClamped, daysBetween, dayLabel, parseYmd, lastDay, monthOf } from './dates.js';
 
 export const BILL_TYPES = [
-  { id: 'cc', label: 'Credit card due', emoji: '💳', color: '#9085E9' },
-  { id: 'emi', label: 'EMI', emoji: '🏦', color: '#3987E5' },
-  { id: 'insurance', label: 'Insurance', emoji: '🛡️', color: '#4FB6D9' },
-  { id: 'subscription', label: 'Subscription', emoji: '🔁', color: '#B06BD8' },
-  { id: 'bill', label: 'Bill', emoji: '🧾', color: '#D8C23A' },
-  { id: 'other', label: 'Other', emoji: '📌', color: '#7C8796' },
+  { id: 'cc', label: 'Credit card due', icon: 'credit-card', color: '#9B87D9' },
+  { id: 'emi', label: 'EMI', icon: 'calendar-clock', color: '#6B8FD6' },
+  { id: 'insurance', label: 'Insurance', icon: 'shield-check', color: '#4FA9C4' },
+  { id: 'subscription', label: 'Subscription', icon: 'repeat', color: '#B27CC9' },
+  { id: 'bill', label: 'Bill', icon: 'receipt', color: '#C9A24B' },
+  { id: 'other', label: 'Other', icon: 'circle-dollar-sign', color: '#8E97A6' },
 ];
 export const RECURRENCES = [
   { id: 'monthly', label: 'Monthly', months: 1 },
