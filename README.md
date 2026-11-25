@@ -32,7 +32,10 @@ Your data stays in this browser's IndexedDB on your device.
   Upcoming card when something is overdue or inside its window. In-app only: there are no push notifications.
   Mark paid moves the date on and offers to log the expense (amount and category prefilled; the toggle defaults
   ON, but OFF for credit card dues so card bills aren't counted twice). Skip this one moves the date with no expense.
-  EMIs count instalments down and archive themselves at zero or past their end date, with Undo.
+  EMIs count instalments down (paying counts one down whether or not it logs an expense; Skip doesn't) and archive
+  themselves at zero or past their end date, with Undo. A bill that is past its end date but still overdue stays, since
+  it is still owed. "Last day of the month" makes a bill's due day follow month length (28/29/30/31); switching it off
+  keeps the date and turns it into a fixed due day.
 
 Amounts are stored as whole paise (integers), never as floating-point rupees. They are shown in INR with Indian digit grouping (₹1,25,000).
 

@@ -1,9 +1,10 @@
 // Bills & renewals: what's due, sorted by due date, with overdue / due soon / later states. In-app only.
 import { h, icon, sheet, toast, confirmDialog } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
-import { todayYmd, isYmd, parseYmd, longDate } from '../dates.js';
+import { todayYmd, isYmd, longDate } from '../dates.js';
 import {
   BILL_TYPES, RECURRENCES, DEFAULT_WARN_DAYS, defaultLogExpense, typeInfo, recurrenceInfo, billStatus, dueText, byDue, endedReason, ARCHIVE_REASONS,
+  resolveSchedule, lastDayOfMonth,
 } from '../bills.js';
 import { state, saveBill, activeCategories, catById, restoreBill } from '../store.js';
 import { refresh } from '../router.js';
@@ -45,6 +46,7 @@ function billSheet(b) {
   const cat = b.categoryId ? catById(b.categoryId) : null;
   const facts = [
     [t.label, recurrenceInfo(b.recurrence).label],
+    b.lastDay ? ['Due day', 'Last day of the month'] : null,
     ['Amount', b.amount > 0 ? `≈ ${formatINR(b.amount)}` : 'Varies'],
     b.installmentsLeft !== null && b.installmentsLeft !== undefined ? ['Instalments left', String(b.installmentsLeft)] : null,
     b.endDate ? ['Ends', longDate(b.endDate)] : null,
@@ -78,11 +80,20 @@ export function billForm(bill, { restoring = false } = {}) {
   let recurrence = bill?.recurrence ?? 'monthly';
   let logExpense = bill?.logExpense ?? defaultLogExpense(type);
   let logTouched = !!bill; // an existing choice is never overwritten by a type change
+  let lastDay = bill?.lastDay === true; // "Last day of month": the due day tracks month length
   sheet(bill ? (restoring ? 'Restore bill' : 'Edit bill') : 'New bill or renewal', (close) => {
     const err = h('p', { class: 'form-error', role: 'alert' });
     const nameIn = h('input', { class: 'input', id: 'bill-name', maxlength: '60', value: bill?.name ?? '', placeholder: 'e.g. Bike EMI', autofocus: true, autocomplete: 'off' });
     const amountIn = h('input', { class: 'input num', id: 'bill-amount', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Varies', value: bill?.amount > 0 ? paiseToInput(bill.amount) : '' });
-    const dueIn = h('input', { class: 'input', id: 'bill-due', type: 'date', value: bill?.dueDate ?? todayYmd(), 'aria-label': 'Next due date' });
+    const dueIn = h('input', {
+      class: 'input', id: 'bill-due', type: 'date', value: bill?.dueDate ?? todayYmd(), 'aria-label': 'Next due date',
+      onchange: () => { if (lastDay && isYmd(dueIn.value)) dueIn.value = lastDayOfMonth(dueIn.value); },
+    });
+    const lastIn = h('input', {
+      type: 'checkbox', id: 'bill-lastday', checked: lastDay,
+      onchange: () => { lastDay = lastIn.checked; if (lastDay && isYmd(dueIn.value)) dueIn.value = lastDayOfMonth(dueIn.value); draw(); },
+    });
+    const lastBox = h('div', {});
     const warnIn = h('input', { class: 'input num', id: 'bill-warn', inputmode: 'numeric', autocomplete: 'off', value: String(bill?.warnDays ?? DEFAULT_WARN_DAYS), 'aria-label': 'Days before to warn' });
     const endIn = h('input', { class: 'input', id: 'bill-end', type: 'date', value: bill?.endDate ?? '', 'aria-label': 'End date (optional)' });
     const leftIn = h('input', { class: 'input num', id: 'bill-left', inputmode: 'numeric', autocomplete: 'off', placeholder: 'e.g. 12', value: bill?.installmentsLeft ?? '', 'aria-label': 'Instalments left' });
@@ -116,6 +127,8 @@ export function billForm(bill, { restoring = false } = {}) {
       emiBox.hidden = !showInstalments();
       endBox.replaceChildren(...(recurrence !== 'once' ? [h('label', { class: 'field-label', for: 'bill-end' }, 'End date (optional)'), endIn] : []));
       endBox.hidden = recurrence === 'once';
+      lastBox.replaceChildren(...(recurrence !== 'once' ? [h('label', { class: 'toggle' }, lastIn, h('span', {}, h('strong', {}, 'Last day of the month'), h('br', {}),
+        h('span', { class: 'muted small' }, lastDay ? 'Due on the 28th, 29th, 30th or 31st, whichever is the month’s last day. The date above is set to the last day of its month.' : 'Turn on for bills due at month end, so the due day follows the month’s length.')))] : []));
       logHint.textContent = type === 'cc' ? 'Off by default for card dues: the card’s purchases are already logged, so this would count the money twice.' : '';
     };
     draw();
@@ -135,10 +148,10 @@ export function billForm(bill, { restoring = false } = {}) {
       }
       const end = recurrence === 'once' || endIn.value === '' ? null : endIn.value;
       if (end && !isYmd(end)) { err.textContent = 'The end date isn’t valid.'; return; }
-      // The day it is really due. Unchanged dates keep their anchor (28 Feb on a "31st" bill stays a 31st bill).
-      const anchorDay = bill && dueIn.value === bill.dueDate ? bill.anchorDay : parseYmd(dueIn.value).d;
+      // The day it is really due (see resolveSchedule: "last day of month", or a fixed day that unchanged dates keep).
+      const sched = resolveSchedule({ dueDate: dueIn.value, lastDay: lastDay && recurrence !== 'once', previous: bill });
       let next = {
-        ...bill, name: nm, type, amount, recurrence, dueDate: dueIn.value, anchorDay, warnDays: warn, endDate: end, installmentsLeft: left,
+        ...bill, name: nm, type, amount, recurrence, ...sched, warnDays: warn, endDate: end, installmentsLeft: left,
         note: noteIn.value.trim().slice(0, 200), categoryId: catIn.value || null, logExpense: logIn.checked, archived: false, archivedReason: null,
       };
       const reason = endedReason(next);
@@ -157,6 +170,7 @@ export function billForm(bill, { restoring = false } = {}) {
       field('Approx. amount (₹, optional)', amountIn),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Repeats'), recChips),
       field('Next due date', dueIn),
+      lastBox,
       field('Warn me this many days before', warnIn),
       emiBox,
       endBox,

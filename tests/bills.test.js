@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  advanceDue, billStatus, endedReason, markPaid, skipOne, sweepEnded, defaultLogExpense, needingAttention, dueText, byDue,
+  advanceDue, billStatus, endedReason, markPaid, skipOne, sweepEnded, defaultLogExpense, needingAttention, dueText, byDue, resolveSchedule, lastDayOfMonth,
 } from '../js/bills.js';
 
 const bill = (over = {}) => ({
   id: 'b1', name: 'Test bill', type: 'bill', amount: 120000, recurrence: 'monthly', dueDate: '2026-11-15', anchorDay: 15, warnDays: 3,
-  endDate: null, installmentsLeft: null, note: '', categoryId: 'c1', logExpense: true, archived: false, archivedReason: null, ...over,
+  endDate: null, installmentsLeft: null, note: '', categoryId: 'c1', logExpense: true, lastDay: false, archived: false, archivedReason: null, ...over,
 });
 
 test('monthly due dates advance across 28/29/30/31-day months and snap back to the due day', () => {
@@ -156,4 +156,103 @@ test('upcoming list: only overdue and due-soon, soonest first', () => {
   const bills = [named('far', { dueDate: '2027-03-01' }), named('soon', { dueDate: '2026-11-27' }), named('late', { dueDate: '2026-11-20' }), named('gone', { dueDate: '2026-11-20', archived: true })];
   assert.deepEqual(needingAttention(bills, '2026-11-25').map((b) => b.id), ['late', 'soon']);
   assert.deepEqual([...bills].sort(byDue).map((b) => b.id), ['gone', 'late', 'soon', 'far'] /* same date: by name */);
+});
+
+// ---- mark paid counts an instalment down whether or not it logs an expense ----
+test('mark paid counts an instalment down even with “log as expense” switched OFF', () => {
+  let b = bill({ type: 'emi', logExpense: false, installmentsLeft: 3, dueDate: '2026-11-05', anchorDay: 5 });
+  let r = markPaid(b);
+  assert.deepEqual([r.expense, r.bill.installmentsLeft, r.bill.archived, r.bill.dueDate], [null, 2, false, '2026-12-05']);
+  r = markPaid(r.bill); assert.deepEqual([r.expense, r.bill.installmentsLeft], [null, 1]);
+  r = markPaid(r.bill);
+  assert.deepEqual([r.expense, r.bill.installmentsLeft, r.bill.archived, r.bill.archivedReason], [null, 0, true, 'installments']);
+  // Same count with logging ON.
+  const on = markPaid(bill({ type: 'emi', logExpense: true, installmentsLeft: 3 }));
+  assert.equal(on.bill.installmentsLeft, 2);
+  assert.ok(on.expense);
+});
+
+test('skipping, unlike paying, leaves the instalments alone (with logging on or off)', () => {
+  for (const logExpense of [true, false]) assert.equal(skipOne(bill({ type: 'emi', logExpense, installmentsLeft: 3 })).bill.installmentsLeft, 3);
+});
+
+// ---- "Last day of month" ----
+test('last day of month: the due day tracks month length through a whole year', () => {
+  let d = '2026-01-31';
+  const seen = [];
+  for (let i = 0; i < 12; i++) { d = advanceDue(d, 'monthly', 31); seen.push(d); }
+  assert.deepEqual(seen, ['2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31', '2026-06-30', '2026-07-31', '2026-08-31', '2026-09-30', '2026-10-31', '2026-11-30', '2026-12-31', '2027-01-31']);
+});
+
+test('last day of month differs from a fixed 30th: 30 Nov goes to 31 Dec, not 30 Dec', () => {
+  assert.equal(advanceDue('2026-11-30', 'monthly', 30), '2026-12-30'); // fixed day
+  assert.equal(advanceDue('2026-11-30', 'monthly', 31), '2026-12-31'); // last day
+  assert.equal(advanceDue('2026-02-28', 'monthly', 31), '2026-03-31'); // short February to a 31-day month
+  assert.equal(advanceDue('2027-02-28', 'monthly', 28), '2027-03-28'); // while a fixed 28th stays the 28th
+});
+
+test('last day of month in leap years and across the year boundary', () => {
+  assert.equal(advanceDue('2028-01-31', 'monthly', 31), '2028-02-29');
+  assert.equal(advanceDue('2028-02-29', 'monthly', 31), '2028-03-31');
+  assert.equal(advanceDue('2100-01-31', 'monthly', 31), '2100-02-28'); // 2100 is not a leap year
+  assert.equal(advanceDue('2026-12-31', 'monthly', 31), '2027-01-31');
+  assert.equal(advanceDue('2026-11-30', 'quarterly', 31), '2027-02-28');
+  assert.equal(advanceDue('2027-02-28', 'quarterly', 31), '2027-05-31');
+  assert.equal(advanceDue('2028-02-29', 'yearly', 31), '2029-02-28');
+  assert.equal(advanceDue('2027-02-28', 'yearly', 31), '2028-02-29'); // the leap-year February's last day is the 29th
+});
+
+test('marking a last-day bill paid walks the month ends', () => {
+  let b = bill({ dueDate: '2026-01-31', anchorDay: 31, lastDay: true });
+  const seen = [];
+  for (let i = 0; i < 4; i++) { b = markPaid(b).bill; seen.push(b.dueDate); }
+  assert.deepEqual(seen, ['2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31']);
+  assert.equal(b.lastDay, true); // paying keeps the option on
+  assert.equal(skipOne(bill({ dueDate: '2026-02-28', anchorDay: 31, lastDay: true })).bill.dueDate, '2026-03-31');
+});
+
+test('lastDayOfMonth', () => {
+  assert.equal(lastDayOfMonth('2026-11-15'), '2026-11-30');
+  assert.equal(lastDayOfMonth('2026-02-01'), '2026-02-28');
+  assert.equal(lastDayOfMonth('2028-02-10'), '2028-02-29');
+  assert.equal(lastDayOfMonth('2026-12-31'), '2026-12-31');
+  assert.equal(lastDayOfMonth('2026-04-30'), '2026-04-30');
+});
+
+test('switching “last day of month” ON snaps the date to its month end and sets the anchor to 31', () => {
+  assert.deepEqual(resolveSchedule({ dueDate: '2026-11-15', lastDay: true }), { dueDate: '2026-11-30', anchorDay: 31, lastDay: true });
+  assert.deepEqual(resolveSchedule({ dueDate: '2028-02-10', lastDay: true }), { dueDate: '2028-02-29', anchorDay: 31, lastDay: true });
+  // Already on, date unchanged: stays.
+  const on = bill({ dueDate: '2026-11-30', anchorDay: 31, lastDay: true });
+  assert.deepEqual(resolveSchedule({ dueDate: '2026-11-30', lastDay: true, previous: on }), { dueDate: '2026-11-30', anchorDay: 31, lastDay: true });
+  // Picking a mid-month date while on re-snaps it.
+  assert.equal(resolveSchedule({ dueDate: '2026-12-10', lastDay: true, previous: on }).dueDate, '2026-12-31');
+});
+
+test('switching it OFF keeps the date shown and makes it an ordinary fixed due day', () => {
+  const on = bill({ dueDate: '2026-02-28', anchorDay: 31, lastDay: true });
+  assert.deepEqual(resolveSchedule({ dueDate: '2026-02-28', lastDay: false, previous: on }), { dueDate: '2026-02-28', anchorDay: 28, lastDay: false });
+  // ...and from then on it stays on the 28th.
+  let b = { ...on, ...resolveSchedule({ dueDate: '2026-02-28', lastDay: false, previous: on }) };
+  assert.equal(markPaid(b).bill.dueDate, '2026-03-28');
+  assert.equal(advanceDue('2026-03-28', 'monthly', b.anchorDay), '2026-04-28');
+});
+
+test('switching it on and off again round-trips sensibly', () => {
+  const fixed = bill({ dueDate: '2026-11-15', anchorDay: 15, lastDay: false });
+  const on = { ...fixed, ...resolveSchedule({ dueDate: fixed.dueDate, lastDay: true, previous: fixed }) };
+  assert.deepEqual([on.dueDate, on.anchorDay, on.lastDay], ['2026-11-30', 31, true]);
+  const off = { ...on, ...resolveSchedule({ dueDate: on.dueDate, lastDay: false, previous: on }) };
+  assert.deepEqual([off.dueDate, off.anchorDay, off.lastDay], ['2026-11-30', 30, false]); // the 30th now, a fixed day
+  const again = { ...off, ...resolveSchedule({ dueDate: off.dueDate, lastDay: true, previous: off }) };
+  assert.deepEqual([again.dueDate, again.anchorDay, again.lastDay], ['2026-11-30', 31, true]);
+  assert.equal(markPaid(again).bill.dueDate, '2026-12-31');
+  assert.equal(markPaid(off).bill.dueDate, '2026-12-30');
+});
+
+test('a fixed-day bill keeps its day when edited without changing the date, and a changed date resets it', () => {
+  const b = bill({ dueDate: '2026-02-28', anchorDay: 31, lastDay: false }); // a 31st bill sitting on 28 Feb
+  assert.equal(resolveSchedule({ dueDate: '2026-02-28', lastDay: false, previous: b }).anchorDay, 31);
+  assert.equal(resolveSchedule({ dueDate: '2026-03-10', lastDay: false, previous: b }).anchorDay, 10);
+  assert.equal(resolveSchedule({ dueDate: '2026-03-10', lastDay: false }).anchorDay, 10); // a new bill
 });

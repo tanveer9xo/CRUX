@@ -505,6 +505,57 @@ check((await text('#paying')).includes('finished and archived'), 'a one-time bil
 await click('#undo-paid');
 await sleep(300);
 check(!(await idb('bills')).find((b) => b.name === 'One-off').archived, 'Undo mark paid (from Add) restores the bill');
+// ---- "Last day of the month": the due day tracks month length ----
+const midMonth = await ev(`import('./js/dates.js').then((d) => d.todayYmd().slice(0, 8) + '15')`);
+const monthEnd = await ev(`import('./js/dates.js').then((d) => d.lastDay(d.todayYmd().slice(0, 7)))`);
+const nextMonthEnd = await ev(`import('./js/dates.js').then((d) => d.lastDay(d.addMonths(d.todayYmd().slice(0, 7), 1)))`);
+await nav('#/bills');
+await click('#new-bill');
+await setVal('#bill-name', 'Maintenance');
+await setVal('#bill-due', midMonth);
+check((await text('.sheet')).includes('Last day of the month') && !(await ev(`document.getElementById('bill-lastday').checked`)), 'bill form has a “Last day of the month” option, off by default');
+await click('#bill-lastday');
+check((await ev(`document.getElementById('bill-due').value`)) === monthEnd, `switching it on sets the date to the month’s last day (${monthEnd})`);
+await setVal('#bill-due', midMonth);
+check((await ev(`document.getElementById('bill-due').value`)) === monthEnd, 'picking a mid-month date while it is on snaps back to the last day');
+await shot('26-bill-lastday');
+await click('#bill-log'); // off: Mark paid then skips the Add screen
+await click('#bill-save');
+await sleep(300);
+let maint = (await idb('bills')).find((b) => b.name === 'Maintenance');
+check(maint.lastDay === true && maint.anchorDay === 31 && maint.dueDate === monthEnd, 'it saves with lastDay on, anchor 31 and the month-end date');
+// A one-time bill has no month-end option.
+await click('#new-bill');
+await clickText('.sheet .chip', 'One-time');
+check(!(await ev(`!!document.getElementById('bill-lastday')`)), 'a one-time bill has no “last day” option');
+await click('.sheet-head .icon-btn');
+await sleep(250);
+// Mark paid (logging off): next month's last day.
+await nav('#/bills');
+await click('button[aria-label="Mark Maintenance paid"]');
+await sleep(300);
+maint = (await idb('bills')).find((b) => b.name === 'Maintenance');
+check(maint.dueDate === nextMonthEnd && maint.lastDay === true && (await text('.toast')).startsWith('Paid. Next due'), `mark paid moves it to next month’s last day (${nextMonthEnd}) and keeps the option on`);
+// Switch it off: the date stays, and it becomes a fixed due day.
+await clickText('.bill-main', 'Maintenance');
+await click('#bill-edit');
+check(await ev(`document.getElementById('bill-lastday').checked`), 'editing shows the option on');
+await click('#bill-lastday');
+check((await ev(`document.getElementById('bill-due').value`)) === nextMonthEnd, 'switching it off leaves the date as it was');
+await click('#bill-save');
+await sleep(300);
+maint = (await idb('bills')).find((b) => b.name === 'Maintenance');
+check(maint.lastDay === false && maint.dueDate === nextMonthEnd && maint.anchorDay === Number(nextMonthEnd.slice(8)), `switched off: a fixed due day (the ${maint.anchorDay}th) on the same date`);
+// And back on.
+await clickText('.bill-main', 'Maintenance');
+await click('#bill-edit');
+await click('#bill-lastday');
+await click('#bill-save');
+await sleep(300);
+maint = (await idb('bills')).find((b) => b.name === 'Maintenance');
+check(maint.lastDay === true && maint.anchorDay === 31 && maint.dueDate === nextMonthEnd, 'switched back on: last day again, anchor 31');
+check((await ev(`import('./js/bills.js').then((b) => b.advanceDue(${JSON.stringify(nextMonthEnd)}, 'monthly', 31))`)) > nextMonthEnd, 'and it advances past that month end');
+
 // Finished bills archive themselves on start-up, with Undo.
 await ev(`(async () => { const s = await import('./js/store.js'); const b = s.state.bills.find((x) => x.name === 'One-off'); await s.saveBill({ ...b, recurrence: 'monthly', type: 'emi', installmentsLeft: 0 }); return true; })()`);
 await send('Page.reload');

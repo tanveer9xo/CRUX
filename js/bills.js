@@ -1,10 +1,13 @@
 // Bills and renewals: due-date maths and the mark-paid / skip / auto-archive rules. Pure: tests/bills.test.js.
 //   bill: { id, name, type, amount (paise|null), recurrence, dueDate, anchorDay, warnDays, endDate|null,
-//           installmentsLeft|null, note, categoryId|null, logExpense, archived, archivedReason|null }
+//           installmentsLeft|null, note, categoryId|null, logExpense, lastDay, archived, archivedReason|null }
 // `anchorDay` is the day of month the bill is really due. dueDate can sit earlier (28 Feb for a bill due on the
 // 31st) and snaps back to the anchor in months that have it.
+// `lastDay` ("Last day of month") makes the due day track month length: 28/29/30/31, whichever the month's last day
+// is. It is stored with anchorDay 31, so the same clamping rules advance it; the flag is what the form shows, and what
+// lets switching it off fall back to an ordinary fixed due day.
 
-import { addMonthsClamped, daysBetween, dayLabel, parseYmd } from './dates.js';
+import { addMonthsClamped, daysBetween, dayLabel, parseYmd, lastDay, monthOf } from './dates.js';
 
 export const BILL_TYPES = [
   { id: 'cc', label: 'Credit card due', emoji: '💳', color: '#9085E9' },
@@ -30,6 +33,23 @@ export const recurrenceInfo = (id) => RECURRENCES.find((r) => r.id === id) ?? RE
  * already logged as expenses, so logging the bill as well would count the money twice.
  */
 export const defaultLogExpense = (type) => type !== 'cc';
+
+/** The last day of the month `ymd` falls in. */
+export const lastDayOfMonth = (ymd) => lastDay(monthOf(ymd));
+
+/**
+ * The schedule fields to store for a chosen due date.
+ *  - "Last day of month" ON: the date snaps to its month's last day and the anchor is 31 (so every later month's
+ *    last day, whatever its length).
+ *  - OFF: the date is kept as chosen and the due day is that date's day. If the bill already had a fixed due day
+ *    and the date is unchanged, that day is kept (28 Feb on a "31st" bill stays a 31st bill). A bill that was on
+ *    "last day" and is switched off becomes a fixed-day bill on the date shown.
+ */
+export function resolveSchedule({ dueDate, lastDay: on, previous = null }) {
+  if (on) return { dueDate: lastDayOfMonth(dueDate), anchorDay: 31, lastDay: true };
+  const keep = previous && !previous.lastDay && previous.dueDate === dueDate;
+  return { dueDate, anchorDay: keep ? previous.anchorDay : parseYmd(dueDate).d, lastDay: false };
+}
 
 /** The next due date after `dueDate`, or null for a one-time item. */
 export function advanceDue(dueDate, recurrence, anchorDay) {

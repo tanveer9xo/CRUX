@@ -172,7 +172,8 @@ function parseGoalData(raw, catIds) {
     if (!b || !ID.test(b.id) || billIds.has(b.id) || !str(b.name).trim() || !BILL_TYPE_IDS.includes(b.type) || !RECURRENCE_IDS.includes(b.recurrence) || !dueOk
       || (amount !== null && !isPaise(amount)) || (endDate !== null && !isYmd(endDate)) || (left !== null && !(Number.isInteger(left) && left >= 0 && left <= 1200))
       || (categoryId !== null && !catIds.has(categoryId)) || !(Number.isInteger(b.warnDays) && b.warnDays >= 0 && b.warnDays <= 90)) return bad(`Bill ${i + 1} is damaged.`);
-    const anchor = Number.isInteger(b.anchorDay) && b.anchorDay >= 1 && b.anchorDay <= 31 ? b.anchorDay : Number(b.dueDate.slice(8));
+    const lastDay = b.lastDay === true; // absent in files from 1.1.0: a fixed due day
+    const anchor = lastDay ? 31 : Number.isInteger(b.anchorDay) && b.anchorDay >= 1 && b.anchorDay <= 31 ? b.anchorDay : Number(b.dueDate.slice(8));
     billIds.add(b.id);
     bills.push({
       id: b.id,
@@ -182,6 +183,7 @@ function parseGoalData(raw, catIds) {
       recurrence: b.recurrence,
       dueDate: b.dueDate,
       anchorDay: anchor,
+      lastDay,
       warnDays: b.warnDays,
       endDate,
       installmentsLeft: left,

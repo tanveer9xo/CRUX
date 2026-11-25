@@ -19,9 +19,9 @@ const sample = () => ({
   ],
   bills: [{
     id: 'bill1', name: 'Bike EMI', type: 'emi', amount: 350000, recurrence: 'monthly', dueDate: '2026-12-05', anchorDay: 5, warnDays: 3,
-    endDate: null, installmentsLeft: 7, note: '', categoryId: 'food', logExpense: true, archived: false, archivedReason: null, createdAt: 8,
+    endDate: null, installmentsLeft: 7, note: '', categoryId: 'food', logExpense: true, lastDay: false, archived: false, archivedReason: null, createdAt: 8,
   }, {
-    id: 'bill2', name: 'Card', type: 'cc', amount: null, recurrence: 'monthly', dueDate: '2026-11-28', anchorDay: 31, warnDays: 5,
+    id: 'bill2', name: 'Card', type: 'cc', amount: null, recurrence: 'monthly', dueDate: '2026-11-30', anchorDay: 31, lastDay: true, warnDays: 5,
     endDate: '2027-12-31', installmentsLeft: null, note: 'HDFC', categoryId: null, logExpense: false, archived: false, archivedReason: null, createdAt: 9,
   }],
 });
@@ -134,4 +134,20 @@ test('backup reminder after 14 days, only when there is data', () => {
   assert.equal(needsBackupReminder(now - 14 * DAY, now, true), false);
   assert.equal(needsBackupReminder(now - 14 * DAY - 1, now, true), true);
   assert.equal(needsBackupReminder(now - 2 * DAY, now, true), false);
+});
+
+test('“last day of month” survives the round trip; a file without it (1.1.0) means a fixed due day', () => {
+  const r = parseBackup(JSON.stringify(buildBackup(sample())));
+  assert.deepEqual(r.data.bills.map((b) => [b.lastDay, b.anchorDay]), [[false, 5], [true, 31]]);
+  const old = buildBackup(sample());
+  for (const b of old.bills) delete b.lastDay;
+  const o = parseBackup(JSON.stringify(old));
+  assert.ok(o.ok);
+  assert.deepEqual(o.data.bills.map((b) => [b.lastDay, b.anchorDay]), [[false, 5], [false, 31]]);
+});
+
+test('a last-day bill always imports with anchor 31, whatever the file says', () => {
+  const b = buildBackup(sample());
+  b.bills[1].anchorDay = 12;
+  assert.equal(parseBackup(JSON.stringify(b)).data.bills[1].anchorDay, 31);
 });
