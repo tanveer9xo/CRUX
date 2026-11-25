@@ -2,6 +2,7 @@
 import { h, icon, badge, bar, statusText } from '../ui.js';
 import { needingAttention } from '../bills.js';
 import { goalSummary } from '../goals.js';
+import { needingConfirmation } from '../income.js';
 import { formatINR } from '../money.js';
 import { todayYmd, monthOf, monthName, daysLeftInMonth } from '../dates.js';
 import { monthSpend, progress, dailyAllowance, monthToDate } from '../insights.js';
@@ -10,6 +11,8 @@ import { state, planFor, catById } from '../store.js';
 import { go } from '../router.js';
 import { entryRow, emptyState, deltaPill, menuButton } from './common.js';
 import { billRow } from './billflow.js';
+import { sourceRow } from './income.js';
+import { monthFigures, allocateSheet } from './month.js';
 
 let backupDismissed = false; // for this session only
 
@@ -34,6 +37,7 @@ export function render() {
 
     backupBanner(),
     upcomingCard(today),
+    incomeExpectedCard(today),
 
     h('section', { class: 'card hero', 'aria-label': 'This month' },
       h('p', { class: 'muted small' }, 'Spent this month'),
@@ -45,6 +49,7 @@ export function render() {
           ? [h('span', { class: 'num strong' }, formatINR(t.remaining)), ' left · ', h('span', { class: 'num' }, formatINR(dailyAllowance(t.remaining, today), { decimals: 'never' })), `/day for ${left} day${left === 1 ? '' : 's'}`]
           : [icon('alert', 'ic ic-inline'), h('span', { class: 'num strong' }, formatINR(-t.remaining)), ' over budget'])),
 
+    monthPlanCard(today),
     insightsLink(today),
     goalsStrip(today),
 
@@ -129,4 +134,35 @@ function goalsStrip(today) {
           h('span', { class: 'num strip-amt' }, formatINR(s.saved, { decimals: 'never' }), s.targeted ? h('span', { class: 'muted' }, ` / ${formatINR(s.target, { decimals: 'never' })}`) : null)),
         s.targeted ? h('div', { class: `bar bar-thin ${s.reached ? 'bar-done' : ''}` }, h('div', { class: 'bar-fill', style: { width: `${Math.min(100, s.pct)}%` } })) : h('span', { class: 'muted small' }, 'No target set')));
     })));
+}
+
+/** Recurring income that is due (or late): tap Received to confirm it, the same pattern as a bill's Paid. */
+function incomeExpectedCard(today) {
+  const items = needingConfirmation(state.incomeSources, today);
+  if (!items.length) return null;
+  return h('section', { class: 'card upcoming income-expected', id: 'income-expected', 'aria-labelledby': 'h-income' },
+    h('div', { class: 'section-head' }, h('h2', { id: 'h-income' }, 'Income expected'), h('a', { href: '#/income', class: 'link' }, 'Income')),
+    h('ul', { class: 'bill-list' }, items.slice(0, 3).map((s) => sourceRow(s, today))),
+    items.length > 3 ? h('a', { href: '#/income', class: 'link more-link' }, `+${items.length - 3} more`) : null);
+}
+
+/** Compact month plan: what is unassigned (or over-planned) and what is left over, with Allocate one tap away. */
+function monthPlanCard(today) {
+  const month = monthOf(today);
+  const { plan: p, lo } = monthFigures(month, today);
+  const hasIncome = state.income.length > 0 || state.incomeSources.some((s) => !s.archived);
+  if (!hasIncome) { // without any income the plan would only say "over-planned": ask for the income instead
+    return h('a', { class: 'link-row', href: '#/income', id: 'month-card' }, h('span', { class: 'link-row-text' }, h('strong', {}, 'Month plan'), h('span', { class: 'muted small' }, ' · add your income to plan the month')), icon('right'));
+  }
+  const canAllocate = lo.leftover > 0 && state.goals.some((g) => !g.archived);
+  return h('section', { class: 'card month-card', id: 'month-card', 'aria-labelledby': 'h-monthplan' },
+    h('div', { class: 'section-head' }, h('h2', { id: 'h-monthplan' }, 'Month plan'), h('a', { href: '#/month', class: 'link' }, 'Open')),
+    h('div', { class: 'month-stats' },
+      h('div', { class: `stat ${p.over ? 'warn' : ''}`, id: 'home-unassigned' },
+        h('p', { class: 'muted small' }, p.over ? 'Over-planned by' : 'Unassigned'),
+        h('p', { class: 'stat-val num' }, p.over ? icon('alert', 'ic ic-inline') : null, formatINR(p.over ? p.overBy : p.unassigned, { decimals: 'never' }))),
+      h('div', { class: `stat ${lo.leftover < 0 ? 'warn' : ''}`, id: 'home-leftover' },
+        h('p', { class: 'muted small' }, lo.leftover < 0 ? 'Over by' : 'Leftover so far'),
+        h('p', { class: 'stat-val num' }, lo.leftover < 0 ? icon('alert', 'ic ic-inline') : null, formatINR(Math.abs(lo.leftover), { decimals: 'never' })))),
+    canAllocate ? h('button', { class: 'btn btn-primary', type: 'button', id: 'home-allocate', onclick: () => allocateSheet() }, icon('goals'), 'Allocate leftover') : null);
 }

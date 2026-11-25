@@ -37,19 +37,32 @@ Your data stays in this browser's IndexedDB on your device.
   it is still owed. "Last day of the month" makes a bill's due day follow month length (28/29/30/31); switching it off
   keeps the date and turns it into a fixed due day.
 
+- **Income:** log what comes in (Salary, Bonus, Other…) by month. A recurring income such as a salary has an expected
+  amount and day (with the same month-end rules as bills, including "last day of the month"); Home shows it as
+  "Income expected" and one tap on Received logs it, with Undo. Income is its own list: never an expense or a goal add,
+  and never part of spending totals, budget bars or spending comparisons.
+- **Month plan:** income expected (and received so far) − category budgets − planned goal contributions = unassigned,
+  amber when over-planned. Leftover so far = income received − expenses − goal adds this month. **Allocate leftover**
+  prefills each goal's remaining monthly plan in priority order (the order on the Goals screen; reorder with the
+  arrows) and blocks allocating more than the leftover. It records goal entries in CRUX only; no real money moves.
+  A compact version sits on Home.
+- **Goal starters:** New goal offers Brother's education, Car, Travel fund, Honeymoon or Custom (none created by default).
+- **Insights → Savings:** savings rate (goal adds ÷ income received; "—" when there's no income) for this month so far
+  against the same days last month, and a 6-month income / spent / saved chart and table.
+
 Amounts are stored as whole paise (integers), never as floating-point rupees. They are shown in INR with Indian digit grouping (₹1,25,000).
 
 ## Navigation
 
-The tab bar is Home, History, **+**, Goals, Bills. Insights, Plan and Settings are in the menu (☰) at the top right of
-every screen, and Home links to Insights and Plan too.
+The tab bar is Home, History, **+**, Goals, Bills. Month plan, Income, Insights, Plan and Settings are in the menu (☰)
+at the top right of every screen; Home links to the month plan, Insights and Plan too.
 
 ## Data and upgrades
 
-IndexedDB database `crux`, schema version 2: `categories`, `budgets`, `entries`, `goals`, `goalAdds`, `bills`, `meta`.
-Upgrading from 1.0.x only adds the three new stores, so existing data is untouched (the browser test builds a real
-version-1 database and upgrades it). Backups are schema 2 and carry goals, goal entries and bills; a backup exported
-from 1.0.x still imports, and keeps the goals and bills already on the device.
+IndexedDB database `crux`, schema version 3: `categories`, `budgets`, `entries`, `goals`, `goalAdds`, `bills`,
+`income`, `incomeSources`, `meta`. Upgrades only add stores, so existing data is untouched (the browser test builds
+real version-1 and version-2 databases and upgrades them). Backups are schema 3. A backup from 1.0.x or 1.1.x still
+imports and keeps whatever it doesn't carry (goals and bills, income) exactly as it is on the device.
 
 ## Run it locally
 

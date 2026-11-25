@@ -50,19 +50,25 @@ async function doImport(fileInput) {
   }
   const when = r.exportedAt ? new Date(r.exportedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'an unknown date';
   const c = r.counts;
+  const n = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
+  const list = (parts) => (parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`);
+  const inFile = [`${n(c.entries, 'expense')} in ${n(c.categories, 'category', 'categories')}`, ...(r.hasGoalData ? [`${n(c.goals, 'goal')} with ${n(c.goalAdds, 'entry', 'entries')}`, n(c.bills, 'bill')] : []), ...(r.hasIncomeData ? [n(c.income, 'income entry', 'income entries'), n(c.incomeSources, 'recurring income source')] : [])];
+  const here = [`${n(state.entries.length, 'expense')} and ${n(state.categories.length, 'category', 'categories')}`, ...(r.hasGoalData ? [`${n(state.goals.length, 'goal')} with ${n(state.goalAdds.length, 'entry', 'entries')}`, n(state.bills.length, 'bill')] : []), ...(r.hasIncomeData ? [n(state.income.length, 'income entry', 'income entries'), n(state.incomeSources.length, 'recurring income source')] : [])];
+  const kept = [...(r.hasGoalData ? [] : [`${n(state.goals.length, 'goal')} (${n(state.goalAdds.length, 'entry', 'entries')})`, n(state.bills.length, 'bill')]), ...(r.hasIncomeData ? [] : [n(state.income.length, 'income entry', 'income entries'), n(state.incomeSources.length, 'recurring income source')])];
+  const missing = [...(r.hasGoalData ? [] : ['goals or bills']), ...(r.hasIncomeData ? [] : ['income'])];
   const ok = await confirmDialog({
     title: 'Replace all your data?',
     body: [
-      `The backup from ${when} has ${c.entries} expenses in ${c.categories} categories` + (r.hasGoalData ? `, ${c.goals} goals with ${c.goalAdds} entries, and ${c.bills} bills.` : '.'),
-      `It will replace everything here now: ${state.entries.length} expenses and ${state.categories.length} categories` + (r.hasGoalData ? `, ${state.goals.length} goals with ${state.goalAdds.length} entries, and ${state.bills.length} bills. This can’t be undone.` : '. This can’t be undone.'),
-      r.hasGoalData ? null : `This file is from an older version and has no goals or bills, so your ${state.goals.length} goals (${state.goalAdds.length} entries) and ${state.bills.length} bills here are kept as they are.`,
-      state.entries.length || state.goals.length || state.bills.length ? 'If you’re not sure, cancel and export first.' : null,
+      `The backup from ${when} has ${list(inFile)}.`,
+      `It will replace everything here now: ${list(here)}. This can’t be undone.`,
+      kept.length ? `This file is from an older version and has no ${missing.join(' or ')}, so your ${list(kept)} here are kept as they are.` : null,
+      state.entries.length || state.goals.length || state.bills.length || state.income.length ? 'If you’re not sure, cancel and export first.' : null,
     ].filter(Boolean),
     ok: 'Replace', danger: true,
   });
   if (!ok) return;
-  await importData(r.data, { keepGoalData: !r.hasGoalData });
-  toast(`Imported ${c.entries} expenses` + (r.hasGoalData ? `, ${c.goals} goals and ${c.bills} bills` : ''));
+  await importData(r.data, { keepGoalData: !r.hasGoalData, keepIncomeData: !r.hasIncomeData });
+  toast(`Imported ${c.entries} expenses` + (r.hasGoalData ? `, ${c.goals} goals and ${c.bills} bills` : '') + (r.hasIncomeData ? `, ${c.income} income entries` : ''));
   go('#/');
 }
 
@@ -77,7 +83,7 @@ function resetDialog() {
       },
     }, icon('download'), 'Export a backup first');
     return h('div', { class: 'sheet-body' },
-      h('p', { class: 'muted', id: 'reset-text' }, `This deletes all ${state.entries.length} expenses, every budget, all your categories, ${state.goals.length} goals (with ${state.goalAdds.length} entries) and ${state.bills.length} bills on this device, and puts back the ${SEED_CATEGORIES.length} starter categories with ₹0 budgets and the ${SEED_GOALS.length} starter goals with ₹0 targets.`),
+      h('p', { class: 'muted', id: 'reset-text' }, `This deletes all ${state.entries.length} expenses, every budget, all your categories, ${state.goals.length} goals (with ${state.goalAdds.length} entries), ${state.bills.length} bills, ${state.income.length} income entries and ${state.incomeSources.length} recurring income sources on this device, and puts back the ${SEED_CATEGORIES.length} starter categories with ₹0 budgets and the ${SEED_GOALS.length} starter goals with ₹0 targets.`),
       h('p', { class: 'muted' }, 'Only CRUX’s own data is deleted; nothing else on this site is touched. It can’t be undone, so export a backup first if you might want your data back.'),
       status,
       exportBtn,
@@ -148,16 +154,16 @@ export function render({ query }) {
 
     h('section', { class: 'card danger-zone' },
       h('h2', {}, 'Reset to starter categories'),
-      h('p', { class: 'muted' }, `Deletes your expenses, budgets, categories, goals and bills, then restores the ${SEED_CATEGORIES.length} starter categories at ₹0 and the ${SEED_GOALS.length} starter goals. Export a backup first.`),
+      h('p', { class: 'muted' }, `Deletes your expenses, budgets, categories, goals, bills and income, then restores the ${SEED_CATEGORIES.length} starter categories at ₹0 and the ${SEED_GOALS.length} starter goals. Export a backup first.`),
       h('button', { class: 'btn btn-ghost-danger', type: 'button', id: 'reset-btn', onclick: resetDialog }, icon('refresh'), 'Reset to starter categories')),
 
     h('section', { class: 'card danger-zone' },
       h('h2', {}, 'Erase everything'),
-      h('p', { class: 'muted' }, 'Deletes every category, budget, expense, goal and bill on this device, and doesn’t put anything back.'),
+      h('p', { class: 'muted' }, 'Deletes every category, budget, expense, goal, bill and income on this device, and doesn’t put anything back.'),
       h('button', {
         class: 'btn btn-ghost-danger', type: 'button',
         onclick: async () => {
-          const ok = await confirmDialog({ title: 'Erase all data?', body: [`${state.entries.length} expenses, ${state.categories.length} categories, ${state.goals.length} goals (${state.goalAdds.length} entries) and ${state.bills.length} bills will be deleted from this device.`, 'Only CRUX’s own data is deleted. This can’t be undone. Export first if you might want them back.'], ok: 'Erase everything', danger: true });
+          const ok = await confirmDialog({ title: 'Erase all data?', body: [`${state.entries.length} expenses, ${state.categories.length} categories, ${state.goals.length} goals (${state.goalAdds.length} entries), ${state.bills.length} bills, ${state.income.length} income entries and ${state.incomeSources.length} recurring income sources will be deleted from this device.`, 'Only CRUX’s own data is deleted. This can’t be undone. Export first if you might want them back.'], ok: 'Erase everything', danger: true });
           if (!ok) return;
           await eraseAll();
           toast('All data erased');

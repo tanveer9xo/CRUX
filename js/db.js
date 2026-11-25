@@ -7,13 +7,16 @@
 //   goalAdds    { id, goalId, amount (signed paise), date, note, bucketId, createdAt }   (kept apart from expenses)
 //   bills       { id, name, type, amount, recurrence, dueDate, anchorDay, warnDays, endDate, installmentsLeft, note,
 //                 categoryId, logExpense, archived, archivedReason, createdAt }
+//   income      { id, sourceId, source, amount (paise > 0), date, note, createdAt }   (kept apart from expenses and goal adds)
+//   incomeSources { id, name, amount, nextDate, anchorDay, lastDay, note, archived, createdAt }   (recurring monthly income)
 //   meta        { key, value }   (lastExport, seeded, goalsSeeded)
 import { SCHEMA_VERSION } from './version.js';
 
 export const DB_NAME = 'crux';
-const STORES = ['categories', 'budgets', 'entries', 'meta', 'goals', 'goalAdds', 'bills'];
+const STORES = ['categories', 'budgets', 'entries', 'meta', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources'];
 const DATA_STORES = ['categories', 'budgets', 'entries'];
 const GOAL_STORES = ['goals', 'goalAdds', 'bills'];
+const INCOME_STORES = ['income', 'incomeSources'];
 let dbp = null;
 
 const req2p = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -33,6 +36,9 @@ export function openDB() {
       if (!db.objectStoreNames.contains('goals')) db.createObjectStore('goals', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('goalAdds')) db.createObjectStore('goalAdds', { keyPath: 'id' }).createIndex('goalId', 'goalId');
       if (!db.objectStoreNames.contains('bills')) db.createObjectStore('bills', { keyPath: 'id' });
+      // Version 3 (1.2.0): income. Upgrading from 1.0.x or 1.1.x only adds these stores; nothing existing is touched.
+      if (!db.objectStoreNames.contains('income')) db.createObjectStore('income', { keyPath: 'id' }).createIndex('date', 'date');
+      if (!db.objectStoreNames.contains('incomeSources')) db.createObjectStore('incomeSources', { keyPath: 'id' });
     };
     r.onsuccess = () => {
       const db = r.result;
@@ -78,14 +84,15 @@ export const setMeta = (key, value) => put('meta', { key, value });
 
 /**
  * Replace all data in one transaction on the "crux" database (import / erase / reset). Meta keys survive
- * unless `clearMeta` is set (reset). `keepGoalData` leaves goals, goal adds and bills alone (importing an older
- * backup that has none). Only this database's own stores are touched.
+ * unless `clearMeta` is set (reset). `keepGoalData` leaves goals, goal adds and bills alone, and `keepIncomeData` leaves
+ * income and recurring sources alone (importing an older backup that has none). Only this database's own stores are
+ * touched.
  */
-export async function replaceAll(data, meta = {}, { clearMeta = false, keepGoalData = false } = {}) {
-  const { categories = [], budgets = {}, entries = [], goals = [], goalAdds = [], bills = [] } = data;
+export async function replaceAll(data, meta = {}, { clearMeta = false, keepGoalData = false, keepIncomeData = false } = {}) {
+  const { categories = [], budgets = {}, entries = [], goals = [], goalAdds = [], bills = [], income = [], incomeSources = [] } = data;
   const db = await openDB();
   const tx = db.transaction(STORES, 'readwrite');
-  const wipe = [...DATA_STORES, ...(keepGoalData ? [] : GOAL_STORES), ...(clearMeta ? ['meta'] : [])];
+  const wipe = [...DATA_STORES, ...(keepGoalData ? [] : GOAL_STORES), ...(keepIncomeData ? [] : INCOME_STORES), ...(clearMeta ? ['meta'] : [])];
   for (const s of wipe) tx.objectStore(s).clear();
   for (const c of categories) tx.objectStore('categories').put(c);
   for (const [month, plan] of Object.entries(budgets)) tx.objectStore('budgets').put({ month, plan });
@@ -96,6 +103,10 @@ export async function replaceAll(data, meta = {}, { clearMeta = false, keepGoalD
   }
   // With keepGoalData, `bills` holds only bills that must be rewritten (see importData: links to categories that are gone).
   for (const b of bills) tx.objectStore('bills').put(b);
+  if (!keepIncomeData) {
+    for (const i of income) tx.objectStore('income').put(i);
+    for (const s of incomeSources) tx.objectStore('incomeSources').put(s);
+  }
   for (const [key, value] of Object.entries(meta)) tx.objectStore('meta').put({ key, value });
   return done(tx);
 }

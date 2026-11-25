@@ -17,6 +17,11 @@ const sample = () => ({
     { id: 'a2', goalId: 'g1', amount: -50000, date: '2026-11-10', note: 'repair', bucketId: 'b1', createdAt: 6 },
     { id: 'a3', goalId: 'g2', amount: 100000, date: '2026-11-12', note: '', bucketId: null, createdAt: 7 },
   ],
+  income: [
+    { id: 'in1', sourceId: 'src1', source: 'Salary', amount: 5000000, date: '2026-11-01', note: '', createdAt: 10 },
+    { id: 'in2', sourceId: null, source: 'Bonus', amount: 1250050, date: '2026-11-15', note: 'diwali', createdAt: 11 },
+  ],
+  incomeSources: [{ id: 'src1', name: 'Salary', amount: 5000000, nextDate: '2026-12-31', anchorDay: 31, lastDay: true, note: '', archived: false, createdAt: 12 }],
   bills: [{
     id: 'bill1', name: 'Bike EMI', type: 'emi', amount: 350000, recurrence: 'monthly', dueDate: '2026-12-05', anchorDay: 5, warnDays: 3,
     endDate: null, installmentsLeft: 7, note: '', categoryId: 'food', logExpense: true, lastDay: false, archived: false, archivedReason: null, createdAt: 8,
@@ -38,9 +43,10 @@ test('a backup round-trips exactly, goals and bills included', () => {
   assert.ok(r.ok, r.error);
   assert.deepEqual(r.data, sample());
   assert.equal(r.hasGoalData, true);
-  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 2, goalAdds: 3, bills: 2 });
+  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 2, goalAdds: 3, bills: 2, income: 2, incomeSources: 1 });
   assert.equal(r.exportedAt, '2026-11-24T10:00:00.000Z');
-  assert.equal(JSON.parse(file).schema, 2);
+  assert.equal(JSON.parse(file).schema, 3);
+  assert.equal(r.hasIncomeData, true);
 });
 
 test('negative goal adds (withdrawals) and a null amount on a bill survive the round trip', () => {
@@ -54,7 +60,8 @@ test('a backup exported from 1.0.2 still imports cleanly (no goals or bills in i
   const r = parseBackup(text);
   assert.ok(r.ok, r.error);
   assert.equal(r.hasGoalData, false); // so the app keeps the goals and bills already on the device
-  assert.deepEqual(r.counts, { categories: 3, entries: 3, months: 2, goals: 0, goalAdds: 0, bills: 0 });
+  assert.deepEqual(r.counts, { categories: 3, entries: 3, months: 2, goals: 0, goalAdds: 0, bills: 0, income: 0, incomeSources: 0 });
+  assert.equal(r.hasIncomeData, false);
   assert.deepEqual(r.data.goals, []);
   assert.equal(r.data.entries[0].amount, 125050);
   assert.equal(r.data.categories[2].archived, true);
@@ -100,10 +107,10 @@ test('damaged goals, goal adds and bills are rejected whole', () => {
 });
 
 test('a backup from a goals-aware build with nothing in them is fine', () => {
-  const b = buildBackup({ ...sample(), goals: [], goalAdds: [], bills: [] });
+  const b = buildBackup({ ...sample(), goals: [], goalAdds: [], bills: [], income: [], incomeSources: [] });
   const r = parseBackup(JSON.stringify(b));
   assert.ok(r.ok);
-  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 0, goalAdds: 0, bills: 0 });
+  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 0, goalAdds: 0, bills: 0, income: 0, incomeSources: 0 });
 });
 
 test('imported text fields are trimmed to size and colours are checked', () => {
@@ -150,4 +157,53 @@ test('a last-day bill always imports with anchor 31, whatever the file says', ()
   const b = buildBackup(sample());
   b.bills[1].anchorDay = 12;
   assert.equal(parseBackup(JSON.stringify(b)).data.bills[1].anchorDay, 31);
+});
+
+test('a backup from the previous version (1.1.1, schema 2) still imports cleanly, with goals and bills and no income', () => {
+  const r = parseBackup(readFileSync(new URL('./fixtures/backup-1.1.1.json', import.meta.url), 'utf8'));
+  assert.ok(r.ok, r.error);
+  assert.deepEqual([r.hasGoalData, r.hasIncomeData], [true, false]); // so the app keeps the income already on the device
+  assert.deepEqual(r.counts, { categories: 2, entries: 1, months: 1, goals: 2, goalAdds: 2, bills: 2, income: 0, incomeSources: 0 });
+  assert.deepEqual(r.data.income, []);
+  assert.equal(r.data.goals[0].order, 0); // goal priority (order) is carried
+  assert.equal(r.data.bills[1].lastDay, true);
+  assert.equal(r.data.goalAdds[1].amount, -50000);
+});
+
+test('goal priority (the order) survives a round trip in the exported order', () => {
+  const b = buildBackup(sample());
+  b.goals[0].order = 5;
+  b.goals[1].order = 2;
+  const r = parseBackup(JSON.stringify(b));
+  assert.deepEqual(r.data.goals.map((g) => [g.id, g.order]), [['g1', 5], ['g2', 2]]);
+});
+
+test('damaged income and recurring income are rejected whole', () => {
+  assert.equal(bad((b) => { delete b.income; }).ok, false); // a schema-3 file must carry income
+  assert.equal(bad((b) => { delete b.incomeSources; }).ok, false);
+  assert.equal(bad((b) => { b.income[0].amount = 0; }).ok, false);
+  assert.equal(bad((b) => { b.income[0].amount = -5; }).ok, false); // income is never negative
+  assert.equal(bad((b) => { b.income[0].amount = 12.5; }).ok, false);
+  assert.equal(bad((b) => { b.income[0].date = '2026-02-30'; }).ok, false);
+  assert.equal(bad((b) => { b.income[0].source = '  '; }).ok, false);
+  assert.equal(bad((b) => { b.income[0].sourceId = 'ghost'; }).ok, false);
+  assert.equal(bad((b) => { b.income[1].id = 'in1'; }).ok, false); // duplicate id
+  assert.equal(bad((b) => { b.incomeSources[0].nextDate = 'soon'; }).ok, false);
+  assert.equal(bad((b) => { b.incomeSources[0].amount = -1; }).ok, false);
+  assert.equal(bad((b) => { b.incomeSources.push({ ...b.incomeSources[0] }); }).ok, false); // duplicate source id
+});
+
+test('income text is trimmed to size; a last-day source always imports with anchor 31; a missing anchor is rebuilt', () => {
+  const b = buildBackup(sample());
+  b.income[0].note = 'n'.repeat(5000);
+  b.income[0].source = 's'.repeat(500);
+  b.incomeSources[0].anchorDay = 12;
+  const r = parseBackup(JSON.stringify(b));
+  assert.equal(r.data.income[0].note.length, 200);
+  assert.equal(r.data.income[0].source.length, 40);
+  assert.equal(r.data.incomeSources[0].anchorDay, 31);
+  const c = buildBackup(sample());
+  c.incomeSources[0].lastDay = false;
+  delete c.incomeSources[0].anchorDay;
+  assert.equal(parseBackup(JSON.stringify(c)).data.incomeSources[0].anchorDay, 31); // from nextDate 2026-12-31
 });

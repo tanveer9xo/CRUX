@@ -11,6 +11,8 @@ import * as insights from './views/insights.js';
 import * as plan from './views/plan.js';
 import * as goals from './views/goals.js';
 import * as bills from './views/bills.js';
+import * as income from './views/income.js';
+import * as month from './views/month.js';
 import * as settings from './views/settings.js';
 
 register('/', home);
@@ -22,6 +24,8 @@ register('/plan', plan);
 register('/goals', goals);
 register('/goal/:id', goals.detail);
 register('/bills', bills);
+register('/income', income);
+register('/month', month);
 register('/settings', settings);
 
 // Tab bar: render in the tap itself (see router.go), so + can focus the amount field on iOS.

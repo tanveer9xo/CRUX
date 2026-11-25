@@ -4,6 +4,7 @@ import { formatINR, formatCompact } from '../money.js';
 import { todayYmd, monthOf, addMonths, rangeLabel, monthLabel, monthName, daysLeftInMonth, isMonth } from '../dates.js';
 import { monthToDate, fullMonth, trend, progress, monthSpend, dailyAllowance, completedMonths } from '../insights.js';
 import { savedInMonth } from '../goals.js';
+import { savingsMtd, incomeTrend } from '../income.js';
 import { state, planFor, catById } from '../store.js';
 import { setQuery } from '../router.js';
 import { monthNav, deltaPill, emptyState, pageHead } from './common.js';
@@ -12,15 +13,15 @@ export const name = 'insights';
 export const tab = null;
 export const title = 'Insights';
 
-const TABS = [['mtd', 'Month to date'], ['months', 'Months'], ['budget', 'Budget']];
+const TABS = [['mtd', 'This month'], ['months', 'Months'], ['budget', 'Budget'], ['savings', 'Savings']];
 
 export function render({ query }) {
   const t = TABS.some(([k]) => k === query.get('t')) ? query.get('t') : 'mtd';
   const today = todayYmd();
-  const body = t === 'mtd' ? mtdView(today) : t === 'months' ? monthsView(today, query.get('m')) : budgetView(today);
+  const body = t === 'mtd' ? mtdView(today) : t === 'months' ? monthsView(today, query.get('m')) : t === 'savings' ? savingsView(today) : budgetView(today);
   return h('div', { class: 'page insights' },
     pageHead('Insights'),
-    h('div', { class: 'segmented', role: 'tablist', 'aria-label': 'Insight' },
+    h('div', { class: 'segmented seg4', role: 'tablist', 'aria-label': 'Insight' },
       TABS.map(([k, label]) => h('button', { class: 'seg', type: 'button', role: 'tab', 'aria-selected': String(k === t), onclick: () => setQuery({ t: k, m: null }) }, label))),
     body);
 }
@@ -163,4 +164,80 @@ function progRow(r, today) {
       h('span', { class: 'num muted' }, `${formatINR(r.spent, { decimals: 'never' })} of ${formatINR(r.budget, { decimals: 'never' })}`),
       h('span', { class: `num prog-left ${r.status}` }, r.status !== 'ok' ? icon('alert', 'ic ic-inline') : null, right,
         !r.unplanned && r.remaining > 0 ? h('span', { class: 'muted' }, ` · ${formatINR(dailyAllowance(r.remaining, today), { decimals: 'never' })}/day`) : null)));
+}
+
+// ---------- savings: income, spending and saving, kept out of every spending figure above ----------
+const SERIES = [['income', 'Income', '#199E70'], ['spent', 'Spent', '#D95926'], ['saved', 'Saved', '#3987E5']];
+const rateText = (r) => (r === null ? '—' : `${r}%`);
+
+/** Percentage-point change in savings rate. More saving is the good direction, so it is green going up. */
+function ratePill(points) {
+  if (points === null) return h('span', { class: 'pill pill-new', title: 'No income to compare with' }, 'No comparison');
+  if (points === 0) return h('span', { class: 'pill pill-flat' }, 'Same');
+  return h('span', { class: `pill ${points > 0 ? 'pill-down' : 'pill-up'}`, 'aria-label': `${Math.abs(points)} percentage points ${points > 0 ? 'higher' : 'lower'}` }, points > 0 ? '▲' : '▼', ` ${Math.abs(points)} pts`);
+}
+
+function savingsView(today) {
+  const mtd = savingsMtd({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, today });
+  const tr = incomeTrend({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, endMonth: monthOf(today), n: 6 });
+  const cur = rangeLabel(mtd.current.from, mtd.current.to);
+  const prev = rangeLabel(mtd.previous.from, mtd.previous.to);
+  const money = (v) => formatINR(v, { decimals: 'never' });
+  const row = (label, a, b) => h('li', { class: 'cmp-row' }, h('span', { class: 'cmp-name' }, label), h('span', { class: 'cmp-vals' }, h('span', { class: 'num strong' }, money(a)), h('span', { class: 'num muted small' }, `was ${money(b)}`)));
+  return h('div', { role: 'tabpanel', id: 'savings-panel' },
+    h('p', { class: 'muted small lede' }, `${cur} compared with ${prev}. Savings rate = money added to goals ÷ income received.`),
+    h('section', { class: 'card cmp-total' },
+      h('div', { class: 'cmp-total-row' },
+        h('div', {}, h('p', { class: 'muted small' }, `Savings rate ${cur}`), h('p', { class: 'hero-amt num', id: 'rate-now' }, rateText(mtd.current.rate))),
+        ratePill(mtd.points)),
+      h('p', { class: 'muted' }, `${prev}: `, h('span', { class: 'num strong', id: 'rate-prev' }, rateText(mtd.previous.rate))),
+      mtd.current.rate === null ? h('p', { class: 'muted small' }, 'No income received yet this month, so there’s no rate to show.') : null),
+    h('ul', { class: 'cmp-list' }, row('Income received', mtd.current.income, mtd.previous.income), row('Spent', mtd.current.spent, mtd.previous.spent), row('Saved to goals', mtd.current.saved, mtd.previous.saved)),
+    h('section', { 'aria-labelledby': 'h-inc-trend' },
+      h('h2', { id: 'h-inc-trend' }, `Income, spent and saved · 6 months to ${monthLabel(tr.months.at(-1), { short: true })}`),
+      h('div', { class: 'card' }, groupedChart(tr)),
+      h('table', { class: 'rate-table', id: 'rate-table' }, h('caption', { class: 'sr-only' }, 'Income, spent, saved and savings rate by month'),
+        h('thead', {}, h('tr', {}, ['Month', 'Income', 'Spent', 'Saved', 'Rate'].map((c) => h('th', { scope: 'col' }, c)))),
+        h('tbody', {}, [...tr.rows].reverse().map((r) => h('tr', {}, h('th', { scope: 'row' }, monthName(r.month)), h('td', { class: 'num' }, formatCompact(r.income)), h('td', { class: 'num' }, formatCompact(r.spent)), h('td', { class: 'num' }, formatCompact(r.saved)), h('td', { class: 'num strong' }, rateText(r.rate))))))));
+}
+
+/** Three bars per month (income, spent, saved). A legend names the series; tap a month for its exact figures. */
+function groupedChart(tr) {
+  const W = 300;
+  const H = 150;
+  const top = 8;
+  const bottom = 18;
+  const max = Math.max(...tr.income, ...tr.spent, ...tr.saved, 1);
+  const slot = W / tr.months.length;
+  const bw = Math.min(12, (slot - 8) / 3);
+  const plotH = H - top - bottom;
+  const readout = h('p', { class: 'chart-readout num', id: 'trend-readout', 'aria-live': 'polite' }, `Tap a month for its figures`);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Income, spent and saved by month' });
+  svg.append(svgEl('line', { x1: 0, x2: W, y1: H - bottom + 0.5, y2: H - bottom + 0.5, class: 'axis' }));
+  const marks = [];
+  tr.months.forEach((m, i) => {
+    const gx = i * slot + (slot - bw * 3 - 4) / 2;
+    SERIES.forEach(([key, , color], k) => {
+      const v = tr[key][i];
+      const bh = v > 0 ? Math.max(2, (v / max) * plotH) : 0;
+      const x = gx + k * (bw + 2);
+      const y = H - bottom - bh;
+      const r = Math.min(3, bw / 2, bh);
+      const mark = svgEl('path', { d: bh > 0 ? `M${x} ${H - bottom}V${y + r}Q${x} ${y} ${x + r} ${y}H${x + bw - r}Q${x + bw} ${y} ${x + bw} ${y + r}V${H - bottom}Z` : '', fill: color, class: 'bar-mark' });
+      mark.dataset.month = m;
+      marks.push(mark);
+      svg.append(mark);
+    });
+    const hit = svgEl('rect', { x: i * slot, y: 0, width: slot, height: H, fill: 'transparent', class: 'hit' });
+    const pick = () => {
+      readout.textContent = `${monthLabel(m, { short: true })}: income ${formatINR(tr.income[i], { decimals: 'never' })} · spent ${formatINR(tr.spent[i], { decimals: 'never' })} · saved ${formatINR(tr.saved[i], { decimals: 'never' })} · rate ${rateText(tr.rate[i])}`;
+      marks.forEach((mk) => mk.classList.toggle('dim', mk.dataset.month !== m));
+    };
+    hit.addEventListener('pointerenter', pick);
+    hit.addEventListener('click', pick);
+    svg.append(hit, svgEl('text', { x: i * slot + slot / 2, y: H - 4, class: 'tick', 'text-anchor': 'middle' }, monthName(m)));
+  });
+  svg.addEventListener('pointerleave', () => marks.forEach((mk) => mk.classList.remove('dim')));
+  const legend = h('ul', { class: 'legend', 'aria-label': 'Legend' }, SERIES.map(([, label, color]) => h('li', {}, h('span', { class: 'dot', style: { '--c': color }, 'aria-hidden': 'true' }), label)));
+  return h('div', { class: 'chart-wrap' }, legend, readout, svg);
 }

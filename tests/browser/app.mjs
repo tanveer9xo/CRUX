@@ -298,7 +298,7 @@ check((await text('main h1')) === 'Goals', 'Goals: one tap from the tab bar');
 await click('.tabbar [data-tab=bills]');
 check((await text('main h1')) === 'Bills', 'Bills: one tap from the tab bar');
 await click('#menu-btn');
-check((await ev(`[...document.querySelectorAll('.menu-item strong')].map((e) => e.textContent).join(',')`)) === 'Insights,Plan,Settings', 'menu in the header holds Insights, Plan and Settings');
+check((await ev(`[...document.querySelectorAll('.menu-item strong')].map((e) => e.textContent).join(',')`)) === 'Month plan,Income,Insights,Plan,Settings', 'menu in the header holds Month plan, Income, Insights, Plan and Settings');
 await shot('15-menu');
 await clickText('.menu-item', 'Insights');
 check((await text('main h1')) === 'Insights', 'Insights: reached from the menu');
@@ -316,7 +316,7 @@ check((await ev(`[...document.querySelectorAll('.goal-card .goal-title')].map((e
 check((await text('.goal-card')).includes('No target set'), 'a goal without a target shows only what is saved');
 // Edit Emergency fund: target, date, plan, two buckets.
 const future = await dayOffset(400);
-await click('.goal-card .icon-btn');
+await click('.goal-card button[aria-label^="Edit"]');
 await setVal('#goal-target', '10,000');
 await setVal('#goal-date', future);
 await setVal('#goal-plan', '1,000');
@@ -392,11 +392,14 @@ check((await idb('goalAdds')).length === 3, 'Undo brings the goal entry back');
 // New goal, archive, restore.
 await nav('#/goals');
 await click('#new-goal');
+check((await ev(`[...document.querySelectorAll('.starter')].map((b) => b.dataset.starter).join('|')`)) === 'Brother’s education|Car|Travel fund|Honeymoon|Custom', 'New goal offers a picker: Brother’s education, Car, Travel fund, Honeymoon, Custom');
+check((await idb('goals')).length === 3, 'the suggested starters are not created until one is picked');
+await clickText('.starter', 'Custom');
 await setVal('#goal-name', 'Trip');
 await click('#goal-save');
 await sleep(300);
 check((await idb('goals')).some((g) => g.name === 'Trip' && g.target === 0), 'a new goal can be added');
-await ev(`[...document.querySelectorAll('.goal-card')].find((c) => c.textContent.includes('Trip')).querySelector('.icon-btn').click(); true`);
+await ev(`[...document.querySelectorAll('.goal-card')].find((c) => c.textContent.includes('Trip')).querySelector('button[aria-label^="Edit"]').click(); true`);
 await sleep(300);
 await click('#goal-archive');
 await clickTop('Archive');
@@ -568,6 +571,163 @@ check(!(await idb('bills')).find((b) => b.name === 'One-off').archived, 'Undo re
 await ev(`(async () => { const s = await import('./js/store.js'); const b = s.state.bills.find((x) => x.name === 'One-off'); await s.saveBill({ ...b, installmentsLeft: 5 }); return true; })()`);
 await nav('#/');
 
+// ---- income, month plan, allocate leftover, priority, savings ----
+await nav('#/');
+check((await text('#month-card')).includes('add your income'), 'Home: without income, the month card asks for it (rather than calling everything over-planned)');
+const spentBeforeIncome = await text('.hero-amt');
+const catsBeforeIncome = await text('.cat-list');
+await nav('#/insights');
+const mtdBeforeIncome = await text('.cmp-total .hero-amt');
+await nav('#/');
+await click('#menu-btn');
+await click('.menu-item[href="#/income"]');
+check((await text('main h1')) === 'Income' && (await text('#income-received')) === '₹0', 'Income: reached from the menu, nothing received yet');
+check((await idb('income')).length === 0 && (await idb('incomeSources')).length === 0, 'no income and no recurring income are seeded');
+// Recurring salary, expected in 2 days.
+const salaryDay = await dayOffset(2);
+await click('#new-source');
+check((await ev(`document.getElementById('src-name').value`)) === 'Salary', 'recurring income form starts as “Salary”');
+await setVal('#src-amount', '60,000');
+await setVal('#src-date', salaryDay);
+await click('#src-save');
+await sleep(300);
+let sal = (await idb('incomeSources'))[0];
+check(sal && sal.amount === 6000000 && sal.nextDate === salaryDay && sal.anchorDay === Number(salaryDay.slice(8)) && sal.lastDay === false, 'Salary saves: ₹60,000 expected, next date and its day as the anchor');
+await nav('#/');
+check((await text('#income-expected')).includes('Salary') && (await text('#income-expected')).includes('in 2 days'), 'Home: “Income expected” shows the salary two days ahead');
+const fmt = (p) => ev(`import('./js/money.js').then((m) => m.formatINR(${p}, { decimals: 'never' }))`);
+const budgetsNow = async () => { const m = await ev(`import('./js/dates.js').then((d) => d.todayYmd().slice(0, 7))`); const rows = (await idb('budgets')).filter((b) => b.month <= m).sort((a, b) => (a.month < b.month ? 1 : -1)); return Object.values(rows[0]?.plan ?? {}).reduce((a, b) => a + b, 0); };
+const plansNow = async () => (await idb('goals')).filter((g) => !g.archived && g.monthlyPlan > 0).reduce((a, g) => a + g.monthlyPlan, 0);
+let expectedUn = 6000000 - (await budgetsNow()) - (await plansNow());
+check((await text('#home-unassigned')).includes(await fmt(Math.abs(expectedUn))), `Home: month card shows unassigned from the expected salary (${await fmt(expectedUn)})`);
+await shot('27-home-income');
+// One tap to confirm, with Undo.
+await click('#income-expected .btn-paid');
+await sleep(300);
+let inc = await idb('income');
+sal = (await idb('incomeSources'))[0];
+check(inc.length === 1 && inc[0].amount === 6000000 && inc[0].sourceId === sal.id && inc[0].source === 'Salary' && sal.nextDate > salaryDay, 'one tap on Received logs ₹60,000 from Salary and moves it to next month');
+check((await text('.toast')).includes('Received ₹60,000 from Salary') && (await text('.toast-btn')) === 'Undo', 'a toast confirms it, with Undo');
+await click('.toast-btn');
+await sleep(300);
+check((await idb('income')).length === 0 && (await idb('incomeSources'))[0].nextDate === salaryDay, 'Undo removes the entry and puts the date back');
+await click('#income-expected .btn-paid');
+await sleep(300);
+check((await idb('income')).length === 1 && !(await ev(`!!document.getElementById('income-expected')`)), 'confirmed again; the Income expected card is gone');
+// Income is not spending.
+check((await text('.hero-amt')) === spentBeforeIncome && (await text('.cat-list')) === catsBeforeIncome, `Home spending and category bars are unchanged by income (${spentBeforeIncome})`);
+await nav('#/insights');
+check((await text('.cmp-total .hero-amt')) === mtdBeforeIncome, 'Insights month-to-date spending is unchanged by income');
+// A one-off bonus, added by hand.
+await nav('#/income');
+await click('#add-income');
+await clickText('.sheet .chip', 'Bonus');
+await setVal('#inc-amount', '5,000.50');
+await click('#inc-save');
+await sleep(300);
+inc = await idb('income');
+const bonus = inc.find((e) => e.source === 'Bonus');
+check(bonus && bonus.amount === 500050 && bonus.sourceId === null, 'a one-off Bonus of ₹5,000.50 is added by hand (500050 paise)');
+check((await text('#income-received')).includes('₹65,000.50'), 'Income shows ₹65,000.50 received this month');
+await shot('28-income');
+// Month plan: the numbers add up.
+await click('#menu-btn');
+await click('.menu-item[href="#/month"]');
+check((await text('main h1')) === 'Month plan', 'Month plan: reached from the menu');
+const received = 6500050;
+expectedUn = received - (await budgetsNow()) - (await plansNow());
+check((await text('#unassigned')).includes(await ev(`import('./js/money.js').then((m) => m.formatINR(${Math.abs(expectedUn)}))`)) && !(await ev(`document.getElementById('unassigned').classList.contains('warn')`)) === (expectedUn >= 0), `Month plan: unassigned = income − budgets − goal plans (${await fmt(expectedUn)})`);
+const monthNow = await ev(`import('./js/dates.js').then((d) => d.todayYmd().slice(0, 7))`);
+const spentMonth = (await idb('entries')).filter((e) => e.date.startsWith(monthNow)).reduce((a, e) => a + e.amount, 0);
+const savedMonth = (await idb('goalAdds')).filter((a) => a.date.startsWith(monthNow)).reduce((a, x) => a + x.amount, 0);
+let leftover = received - spentMonth - savedMonth;
+check((await text('#leftover')).includes((await ev(`import('./js/money.js').then((m) => m.formatINR(${Math.abs(leftover)}))`))), `Month plan: leftover = received − expenses − goal adds (${leftover} paise)`);
+// Over-planned: a big plan on Wedding fund.
+await nav('#/goals');
+await ev(`[...document.querySelectorAll('.goal-card')].find((c) => c.textContent.includes('Wedding fund')).querySelector('button[aria-label^="Edit"]').click(); true`);
+await sleep(300);
+await setVal('#goal-plan', '1,00,00,000');
+await click('#goal-save');
+await sleep(300);
+await nav('#/month');
+check(await ev(`document.getElementById('unassigned').classList.contains('warn')`) && (await text('#unassigned')).startsWith('Over-planned by'), 'over-planned: the result turns amber and reads “Over-planned by ₹X”');
+await shot('29-month-overplanned');
+await nav('#/');
+check((await text('#home-unassigned')).includes('Over-planned by') && await ev(`document.getElementById('home-unassigned').classList.contains('warn')`), 'Home: the month card shows the over-planned warning in amber');
+await nav('#/goals');
+await ev(`[...document.querySelectorAll('.goal-card')].find((c) => c.textContent.includes('Wedding fund')).querySelector('button[aria-label^="Edit"]').click(); true`);
+await sleep(300);
+await setVal('#goal-plan', '2,000');
+await click('#goal-save');
+await sleep(300);
+// Priority: move Wedding fund to the top.
+for (let i = 0; i < 4; i++) {
+  const can = await ev(`!document.querySelector('button[aria-label="Raise priority of Wedding fund"]')?.disabled`);
+  if (!can) break;
+  await click('button[aria-label="Raise priority of Wedding fund"]');
+}
+const byOrder = (await idb('goals')).filter((g) => !g.archived).sort((a, b) => a.order - b.order).map((g) => g.name);
+check(byOrder[0] === 'Wedding fund' && (await ev(`document.querySelector('.goal-card .prio').textContent`)) === '#1', `priority: Wedding fund moved to #1 (${byOrder.join(' > ')})`);
+await shot('30-goals-priority');
+// Allocate from Home.
+await nav('#/');
+await shot('31-home-month-card');
+await click('#home-allocate');
+check((await text('.sheet h2')) === 'Allocate leftover' && (await text('#alloc-note')).includes('does not move any real money'), 'Allocate opens and says it does not move real money');
+const prefilled = await ev(`[...document.querySelectorAll('.alloc-input')].map((i) => [i.dataset.goal, i.value])`);
+const goalIdsByName = Object.fromEntries((await idb('goals')).map((g) => [g.name, g.id]));
+check(prefilled[0][0] === goalIdsByName['Wedding fund'] && prefilled[0][1] === '2000', 'the top-priority goal is listed first, prefilled with its remaining plan (₹2,000)');
+check(prefilled.find(([id]) => id === goalIdsByName['Emergency fund'])[1] === '', 'a goal whose plan is already met this month is prefilled with nothing');
+await shot('32-allocate');
+// Too much is blocked, with a clear message.
+const tooMuch = (Math.floor(leftover / 100) + 1).toString();
+await setVal(`.alloc-input[data-goal="${goalIdsByName['Wedding fund']}"]`, tooMuch);
+check(await ev(`document.getElementById('alloc-summary').classList.contains('bad')`), 'the running total turns red when it exceeds the leftover');
+const addsBeforeAlloc = (await idb('goalAdds')).length;
+await click('#alloc-save');
+check((await text('.sheet .form-error')).includes('more than your leftover') && (await idb('goalAdds')).length === addsBeforeAlloc, 'saving more than the leftover is blocked and nothing is recorded');
+// A valid allocation, rounded to the paise, with a bucket.
+await setVal(`.alloc-input[data-goal="${goalIdsByName['Wedding fund']}"]`, '2,000.005');
+await setVal(`.alloc-input[data-goal="${goalIdsByName['Emergency fund']}"]`, '100');
+await setVal(`.alloc-bucket[data-goal="${goalIdsByName['Emergency fund']}"]`, fdId);
+check((await text('#alloc-summary')).includes('stays unassigned'), 'the sheet shows what stays unassigned');
+await click('#alloc-save');
+await sleep(400);
+const newAdds = (await idb('goalAdds')).filter((a) => a.note === 'Allocated from leftover');
+const today2 = await dayOffset(0);
+check(newAdds.length === 2 && newAdds.some((a) => a.goalId === goalIdsByName['Wedding fund'] && a.amount === 200001) && newAdds.some((a) => a.goalId === goalIdsByName['Emergency fund'] && a.amount === 10000 && a.bucketId === fdId) && newAdds.every((a) => a.date === today2), 'Save creates goal adds dated today: ₹2,000.01 (rounded half up to the paise) and ₹100 into the FD bucket');
+check((await text('.toast')).includes('No real money moved'), 'the toast repeats that no real money moved');
+leftover -= 210001;
+await nav('#/month');
+check((await text('#leftover')).includes(await ev(`import('./js/money.js').then((m) => m.formatINR(${leftover}))`)), 'the leftover drops by what was allocated');
+// Savings rate in Insights.
+await nav('#/insights?t=savings');
+const incMtd = (await idb('income')).filter((e) => e.date.startsWith(monthNow) && e.date <= today2).reduce((a, e) => a + e.amount, 0);
+const savMtd = (await idb('goalAdds')).filter((a) => a.date.startsWith(monthNow) && a.date <= today2).reduce((a, x) => a + x.amount, 0);
+const rate = Math.sign(savMtd) * Math.round(Math.abs(savMtd * 100 / incMtd));
+check((await text('#rate-now')) === `${rate}%`, `Insights: savings rate this month = goal adds ÷ income (${rate}%)`);
+check((await text('#rate-prev')) === '—', 'last month had no income: shown as “—”, not a divide-by-zero');
+check((await ev(`document.querySelectorAll('#rate-table tbody tr').length`)) === 6 && (await ev(`document.querySelectorAll('.legend li').length`)) === 3, '6-month table and a legend for income, spent and saved');
+await shot('33-insights-savings');
+await ev(`document.getElementById('h-inc-trend').scrollIntoView(); true`);
+await shot('33b-insights-savings-trend');
+// Goal starters.
+await nav('#/goals');
+await click('#new-goal');
+await shot('34-goal-picker');
+await clickText('.starter', 'Car');
+check((await ev(`document.getElementById('goal-name').value`)) === 'Car' && (await ev(`document.activeElement?.id`)) === 'goal-target', 'picking “Car” prefills the name and puts you on the target');
+await setVal('#goal-target', '5,00,000');
+await setVal('#goal-date', future);
+await click('#goal-save');
+await sleep(300);
+const car = (await idb('goals')).find((g) => g.name === 'Car');
+check(car && car.target === 50000000 && car.targetDate === future && car.order === Math.max(...(await idb('goals')).map((g) => g.order)), 'Car is created with its target and date, at the bottom of the priority list');
+await click('#new-goal');
+check(await ev(`document.querySelector('.starter[data-starter="Car"]').disabled`), 'the picker shows Car as already added');
+await click('.sheet-head .icon-btn');
+await sleep(250);
+
 // ---- export & import ----
 await click('.tabbar [data-tab=home]');
 await click('.banner .btn-primary');
@@ -583,7 +743,10 @@ check(backup.app === 'crux' && backup.entries.length === count && backup.entries
 const gN = (await idb('goals')).length;
 const aN = (await idb('goalAdds')).length;
 const bN = (await idb('bills')).length;
-check(backup.schema === 2 && backup.goals.length === gN && backup.goalAdds.length === aN && backup.bills.length === bN && gN >= 3 && aN >= 3 && bN >= 3, `the backup also holds ${gN} goals, ${aN} goal entries and ${bN} bills (schema 2)`);
+check(backup.schema === 3 && backup.goals.length === gN && backup.goalAdds.length === aN && backup.bills.length === bN && gN >= 3 && aN >= 3 && bN >= 3, `the backup also holds ${gN} goals, ${aN} goal entries and ${bN} bills (schema 3)`);
+const iN = (await idb('income')).length;
+const sN = (await idb('incomeSources')).length;
+check(backup.income.length === iN && backup.incomeSources.length === sN && iN >= 2 && sN >= 1 && backup.income.every((e) => Number.isInteger(e.amount) && e.amount > 0), `the backup holds ${iN} income entries and ${sN} recurring income source(s), as integer paise`);
 check(backup.goalAdds.some((a) => a.amount < 0) && backup.goalAdds.every((a) => Number.isInteger(a.amount)) && backup.bills.every((b) => b.amount === null || Number.isInteger(b.amount)), 'goal withdrawals are negative integers; bill amounts are integer paise or null');
 await click('.tabbar [data-tab=home]');
 check(!(await ev(`!!document.querySelector('.banner')`)), 'backup reminder is gone after exporting');
@@ -597,7 +760,7 @@ const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, select
 await send('DOM.setFileInputFiles', { nodeId, files: [join(WORK, 'small.json')] });
 await sleep(600);
 check((await text('.sheet h2')) === 'Replace all your data?', 'Import asks before replacing anything');
-check((await text('.sheet')).includes(`${gN} goals with ${aN} entries, and ${bN} bills`), 'Import preview shows counts for goals, their entries and bills');
+check((await text('.sheet')).includes(`${gN} goals with ${aN} entries, ${bN} bills, ${iN} income entries and ${sN} recurring income source`) && (await text('.sheet')).includes('income entries'), 'Import preview shows counts for goals, their entries, bills and income');
 await shot('11-import-confirm');
 await clickText('.sheet .btn', 'Cancel');
 check((await idb('entries')).length === count, 'Cancel leaves the data as it was');
@@ -607,6 +770,7 @@ await clickText('.sheet .btn', 'Replace');
 await sleep(500);
 check((await idb('entries')).length === 3, 'Replace imports the backup (3 entries)');
 check(norm((await idb('goals')).sort((a, b) => a.order - b.order)) === norm([...backup.goals].sort((a, b) => a.order - b.order)) && (await idb('goalAdds')).length === aN && (await idb('bills')).length === bN, 'goals, goal entries and bills come back from the backup too');
+check((await idb('income')).length === iN && (await idb('incomeSources')).length === sN, 'income and recurring income come back from the backup too');
 // A damaged file is refused.
 writeFileSync(join(WORK, 'bad.json'), JSON.stringify({ ...backup, entries: [{ ...backup.entries[0], amount: 12.5 }] }));
 await nav('#/settings');
@@ -634,6 +798,8 @@ await send('Network.emulateNetworkConditions', { offline: false, latency: 0, dow
 const goalsHere = JSON.stringify((await idb('goals')).sort((a, b) => a.id.localeCompare(b.id)));
 const addsHere = JSON.stringify((await idb('goalAdds')).sort((a, b) => a.id.localeCompare(b.id)));
 const billsHere = (await idb('bills')).sort((a, b) => a.id.localeCompare(b.id));
+const incomeHere = norm((await idb('income')).sort((a, b) => a.id.localeCompare(b.id)));
+const sourcesHere = norm((await idb('incomeSources')).sort((a, b) => a.id.localeCompare(b.id)));
 await nav('#/settings');
 const fx = (await send('DOM.querySelector', { nodeId: (await send('DOM.getDocument')).root.nodeId, selector: '#import-file' })).nodeId;
 await send('DOM.setFileInputFiles', { nodeId: fx, files: [join(process.cwd(), 'tests/fixtures/backup-1.0.2.json')] });
@@ -648,6 +814,19 @@ check(JSON.stringify((await idb('goals')).sort((a, b) => a.id.localeCompare(b.id
 const billsNow = (await idb('bills')).sort((a, b) => a.id.localeCompare(b.id));
 check(billsNow.length === billsHere.length && billsNow.every((b, i) => JSON.stringify({ ...b, categoryId: 0 }) === JSON.stringify({ ...billsHere[i], categoryId: 0 }) && (b.categoryId === null || fxCats.some((c) => c.id === b.categoryId))), 'bills are kept; a link to a category that no longer exists is cleared');
 check(await ev(`Promise.all([import('./js/backup.js'), import('./js/store.js')]).then(([b, s]) => b.parseBackup(JSON.stringify(s.exportData())).ok)`), 'the next export still validates (no dangling links)');
+check(norm((await idb('income')).sort((a, b) => a.id.localeCompare(b.id))) === incomeHere && norm((await idb('incomeSources')).sort((a, b) => a.id.localeCompare(b.id))) === sourcesHere, 'income and recurring income are kept exactly too');
+
+// ---- a backup from the previous version (1.1.1: goals and bills, no income) imports and keeps the income here ----
+await nav('#/settings');
+const fx2 = (await send('DOM.querySelector', { nodeId: (await send('DOM.getDocument')).root.nodeId, selector: '#import-file' })).nodeId;
+await send('DOM.setFileInputFiles', { nodeId: fx2, files: [join(process.cwd(), 'tests/fixtures/backup-1.1.1.json')] });
+await sleep(600);
+check((await text('.sheet')).includes('1 expense in 2 categories, 2 goals with 2 entries and 2 bills') && (await text('.sheet')).includes('has no income') && (await text('.sheet')).includes('are kept as they are'), 'a 1.1.1 backup imports: the preview counts its goals and bills and says income is kept');
+await clickTop('Replace');
+await sleep(500);
+check((await idb('goals')).map((g) => g.id).sort().join() === 'goal_ef,goal_wd' && (await idb('bills')).length === 2 && (await idb('goalAdds')).length === 2, 'its goals, goal entries and bills replace what was here');
+check(norm((await idb('income')).sort((a, b) => a.id.localeCompare(b.id))) === incomeHere && norm((await idb('incomeSources')).sort((a, b) => a.id.localeCompare(b.id))) === sourcesHere, 'income and recurring income from this device are kept exactly');
+check((await idb('bills')).find((b) => b.id === 'bill_maint').lastDay === true, 'its “last day of month” bill keeps the option');
 
 // ---- reset to starter categories: CRUX's data only; VANE's data on the same origin survives ----
 const vaneSnapshot = () => ev(`(async () => {
@@ -661,7 +840,7 @@ const vaneBefore = await vaneSnapshot();
 check(vaneBefore.appearance === 'dark' && vaneBefore.cachedText === 'vane cached file' && vaneBefore.dbs['workout-tracker'][0] === 'vane workout workout-tracker', 'VANE fixture is in place before the reset');
 check(await ev(`localStorage.getItem('cruxLeftover') === 'crux-owned key'`), 'a crux-prefixed localStorage key exists before the reset');
 const entriesBefore = (await idb('entries')).length;
-const [goalsBefore, addsBefore, billsBefore] = [(await idb('goals')).length, (await idb('goalAdds')).length, (await idb('bills')).length];
+const [goalsBefore, addsBefore, billsBefore, incBefore, srcBefore] = [(await idb('goals')).length, (await idb('goalAdds')).length, (await idb('bills')).length, (await idb('income')).length, (await idb('incomeSources')).length];
 await send('Page.navigate', { url: `${BASE}#/settings` });
 await sleep(1200);
 await shot('12-settings-reset');
@@ -669,7 +848,7 @@ await shot('12-settings-reset');
 await click('#reset-btn');
 check((await text('.sheet h2')) === 'Reset to starter categories?', 'Reset asks for confirmation first');
 check((await text('.sheet')).includes('Export a backup first') && (await text('.sheet')).includes(`${entriesBefore} expenses`), `the dialog suggests an Export and says how many expenses (${entriesBefore}) go`);
-check((await text('#reset-text')).includes(`${goalsBefore} goals (with ${addsBefore} entries) and ${billsBefore} bills`), `the dialog also counts the goals (${goalsBefore}), their entries (${addsBefore}) and bills (${billsBefore}) that go`);
+check((await text('#reset-text')).includes(`${goalsBefore} goals (with ${addsBefore} entries), ${billsBefore} bills, ${incBefore} income entries and ${srcBefore} recurring income sources`), `the dialog also counts the goals (${goalsBefore}), their entries (${addsBefore}), bills (${billsBefore}) and income (${incBefore} entries, ${srcBefore} recurring) that go`);
 await shot('13-reset-confirm');
 await clickText('.sheet .btn', 'Cancel');
 check((await idb('entries')).length === entriesBefore, 'Cancel leaves everything as it was');
@@ -688,6 +867,7 @@ check(plan2.length === 18 && plan2.every((v) => v === 0), 'after reset: every bu
 check((await idb('budgets')).length === 1, 'after reset: a single month of budgets (no old history)');
 const goals2 = (await idb('goals')).sort((a, b) => a.order - b.order);
 check(goals2.map((g) => g.name).join() === 'Emergency fund,Wedding fund,Long-term investments' && goals2.every((g) => g.target === 0 && g.buckets.length === 0 && !g.archived) && (await idb('goalAdds')).length === 0 && (await idb('bills')).length === 0, 'after reset: goals and bills are cleared, the 3 starter goals are back at ₹0');
+check((await idb('income')).length === 0 && (await idb('incomeSources')).length === 0, 'after reset: income and recurring income are cleared');
 check((await idb('meta')).every((m) => m.key !== 'lastExport') && cats2.every((c) => !cats.some((o) => o.id === c.id)), 'after reset: old ids and the last-export date are gone (a fresh start)');
 check(await ev(`localStorage.getItem('cruxLeftover') === null`), 'after reset: crux-prefixed localStorage keys are removed');
 check(await ev(`location.hash === '#/' && document.querySelector('.hero-amt').textContent === '₹0'`), 'after reset: back on Home showing ₹0');
@@ -700,16 +880,16 @@ await shot('14-after-reset');
 // ---- erase everything: also goals and bills, only CRUX's data, and nothing comes back on reload ----
 await nav('#/settings');
 await clickText('.danger-zone .btn', 'Erase all data');
-check((await text('.sheet')).includes('goals') && (await text('.sheet')).includes('bills will be deleted') && (await text('.sheet')).includes('Only CRUX’s own data'), 'Erase confirms with the counts of goals and bills too');
+check((await text('.sheet')).includes('goals') && (await text('.sheet')).includes('recurring income sources will be deleted') && (await text('.sheet')).includes('Only CRUX’s own data'), 'Erase confirms with the counts of goals and bills too');
 await clickTop('Cancel');
 check((await idb('goals')).length === 3 && (await idb('categories')).length === 18, 'Cancel leaves everything');
 await clickText('.danger-zone .btn', 'Erase all data');
 await clickTop('Erase everything');
 await sleep(500);
-const stores = ['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills'];
+const stores = ['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources'];
 const counts = {};
 for (const st of stores) counts[st] = (await idb(st)).length;
-check(stores.every((st) => counts[st] === 0), `Erase empties all six stores (${JSON.stringify(counts)})`);
+check(stores.every((st) => counts[st] === 0), `Erase empties all eight data stores (${JSON.stringify(counts)})`);
 check(JSON.stringify(await vaneSnapshot()) === JSON.stringify(vaneBefore), 'VANE’s data survives the erase untouched');
 await send('Page.reload');
 await sleep(1500);
@@ -744,8 +924,8 @@ await ev(`(async () => {
 await send('Page.navigate', { url: BASE });
 await sleep(2500);
 const dbInfo = await ev(`indexedDB.databases().then((d) => d.find((x) => x.name === 'crux'))`);
-check(dbInfo.version === 2, 'migration: the database upgraded from version 1 to 2');
-check(await ev(`new Promise((ok) => { const r = indexedDB.open('crux'); r.onsuccess = () => { ok(['goals', 'goalAdds', 'bills'].every((s) => r.result.objectStoreNames.contains(s))); r.result.close(); }; })`), 'migration: the goals, goalAdds and bills stores exist');
+check(dbInfo.version === 3, 'migration: the database upgraded from version 1 to 3');
+check(await ev(`new Promise((ok) => { const r = indexedDB.open('crux'); r.onsuccess = () => { ok(['goals', 'goalAdds', 'bills', 'income', 'incomeSources'].every((s) => r.result.objectStoreNames.contains(s))); r.result.close(); }; })`), 'migration: the goals, goalAdds, bills, income and incomeSources stores exist');
 const mc = (await idb('categories')).sort((a, b) => a.order - b.order);
 check(mc.map((c) => c.id).join() === 'old_c1,old_c2', 'migration: both old categories are there, and the 18 starters were not added on top');
 const me = (await idb('entries')).sort((a, b) => a.id.localeCompare(b.id));
@@ -755,6 +935,46 @@ const mg = (await idb('goals')).sort((a, b) => a.order - b.order);
 check(mg.map((g) => g.name).join() === 'Emergency fund,Wedding fund,Long-term investments' && mg.every((g) => g.target === 0) && (await idb('bills')).length === 0, 'migration: the three starter goals appear at ₹0, with no bills');
 check((await text('.hero')).includes('₹2,249.55') && (await text('.hero')).includes('₹13,000'), 'migration: Home shows the old data (₹2,249.55 spent of ₹13,000)');
 check(await ev(`Promise.all([import('./js/backup.js'), import('./js/store.js')]).then(([b, s]) => { const f = b.parseBackup(JSON.stringify(s.exportData())); return f.ok && f.counts.goals === 3 && f.counts.entries === 3; })`), 'migration: export works straight after the upgrade');
+
+// ---- migration: a 1.1.x install (database version 2, with goals and bills) upgrades to version 3 ----
+await send('Page.navigate', { url: `${ORIGIN}/VANE/` });
+await sleep(800);
+await ev(`(async () => {
+  await new Promise((ok, no) => { const r = indexedDB.deleteDatabase('crux'); r.onsuccess = () => ok(); r.onerror = () => no(r.error); });
+  await new Promise((ok, no) => {
+    const r = indexedDB.open('crux', 2);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      db.createObjectStore('categories', { keyPath: 'id' }); db.createObjectStore('budgets', { keyPath: 'month' });
+      db.createObjectStore('entries', { keyPath: 'id' }).createIndex('date', 'date'); db.createObjectStore('meta', { keyPath: 'key' });
+      db.createObjectStore('goals', { keyPath: 'id' }); db.createObjectStore('goalAdds', { keyPath: 'id' }).createIndex('goalId', 'goalId'); db.createObjectStore('bills', { keyPath: 'id' });
+    };
+    r.onsuccess = () => {
+      const db = r.result;
+      const tx = db.transaction(['categories', 'budgets', 'entries', 'meta', 'goals', 'goalAdds', 'bills'], 'readwrite');
+      tx.objectStore('categories').put({ id: 'v2_c1', name: 'V2 Rent', emoji: '🏠', color: '#3987E5', order: 0, archived: false, createdAt: 1 });
+      tx.objectStore('budgets').put({ month: '${month}', plan: { v2_c1: 2000000 } });
+      tx.objectStore('entries').put({ id: 'v2_e1', amount: 333333, categoryId: 'v2_c1', date: '${month}-02', note: 'v2', createdAt: 2, updatedAt: 2 });
+      tx.objectStore('goals').put({ id: 'v2_g1', name: 'V2 goal', emoji: '🎯', target: 1000000, targetDate: null, monthlyPlan: 50000, buckets: [{ id: 'v2_b1', name: 'FD' }], archived: false, order: 0, createdAt: 3 });
+      tx.objectStore('goalAdds').put({ id: 'v2_a1', goalId: 'v2_g1', amount: 120000, date: '${month}-03', note: '', bucketId: 'v2_b1', createdAt: 4 });
+      tx.objectStore('bills').put({ id: 'v2_b1', name: 'V2 bill', type: 'bill', amount: 5000, recurrence: 'monthly', dueDate: '2099-01-31', anchorDay: 31, lastDay: true, warnDays: 3, endDate: null, installmentsLeft: null, note: '', categoryId: 'v2_c1', logExpense: true, archived: false, archivedReason: null, createdAt: 5 });
+      tx.objectStore('meta').put({ key: 'seeded', value: 1 });
+      tx.objectStore('meta').put({ key: 'goalsSeeded', value: 1 });
+      tx.objectStore('meta').put({ key: 'lastExport', value: 1700000000009 });
+      tx.oncomplete = () => { db.close(); ok(); };
+    };
+    r.onerror = () => no(r.error);
+  });
+  return true;
+})()`);
+await send('Page.navigate', { url: BASE });
+await sleep(2500);
+check((await ev(`indexedDB.databases().then((d) => d.find((x) => x.name === 'crux').version)`)) === 3, 'migration from 1.1.x: the database upgraded from version 2 to 3');
+check((await idb('categories')).map((c) => c.id).join() === 'v2_c1' && (await idb('entries'))[0].amount === 333333 && (await idb('budgets'))[0].plan.v2_c1 === 2000000, 'migration from 1.1.x: categories, budgets and expenses intact');
+const v2g = await idb('goals');
+check(v2g.length === 1 && v2g[0].id === 'v2_g1' && v2g[0].buckets[0].name === 'FD' && (await idb('goalAdds'))[0].amount === 120000 && (await idb('bills'))[0].lastDay === true, 'migration from 1.1.x: goals, buckets, goal entries and bills intact (no starter goals added on top)');
+check((await idb('income')).length === 0 && (await idb('incomeSources')).length === 0 && (await idb('meta')).find((m) => m.key === 'lastExport').value === 1700000000009, 'migration from 1.1.x: the new income stores start empty; the last-export date is kept');
+check((await text('#month-card')).includes('add your income'), 'migration from 1.1.x: Home renders and asks for income');
 check(JSON.stringify(await vaneSnapshot()) === JSON.stringify(vaneBefore), 'VANE’s data is still untouched at the end');
 
 check(failed.length === 0, `no failed requests${failed.length ? `: ${failed.slice(0, 3).join(', ')}` : ''}`);

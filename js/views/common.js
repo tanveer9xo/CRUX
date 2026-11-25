@@ -41,6 +41,8 @@ export function emptyState(title, text, action) {
 }
 
 const MENU = [
+  ['#/month', 'Month plan', 'month', 'Income minus budgets and goals, leftover, allocate'],
+  ['#/income', 'Income', 'income', 'What came in, and recurring income like salary'],
   ['#/insights', 'Insights', 'chart', 'Spending against last month, trends, budget progress'],
   ['#/plan', 'Plan', 'plan', 'Categories and monthly budgets'],
   ['#/settings', 'Settings', 'gear', 'Backup, install, updates, reset'],

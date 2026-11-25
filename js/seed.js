@@ -36,3 +36,12 @@ export const SEED_GOALS = [
   { name: 'Wedding fund', emoji: '💍' },
   { name: 'Long-term investments', emoji: '📈' },
 ];
+
+// Suggested goals offered by the "New goal" picker. None of these is created by default.
+export const GOAL_STARTERS = [
+  { name: 'Brother’s education', emoji: '🎓' },
+  { name: 'Car', emoji: '🚗' },
+  { name: 'Travel fund', emoji: '✈️' },
+  { name: 'Honeymoon', emoji: '🌴' },
+  { name: 'Custom', emoji: '🎯', custom: true },
+];

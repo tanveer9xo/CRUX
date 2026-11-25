@@ -7,6 +7,7 @@ import { buildBackup } from './backup.js';
 import { byNewest } from './insights.js';
 import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS } from './seed.js';
 import { markPaid as billMarkPaid, skipOne as billSkipOne, sweepEnded } from './bills.js';
+import { receiveIncome, skipSource as skipIncomeSource } from './income.js';
 
 export const state = {
   categories: [], // sorted by order
@@ -15,6 +16,8 @@ export const state = {
   goals: [], // sorted by order; archived ones included
   goalAdds: [], // newest first. A separate list from entries: never counted as spending
   bills: [], // archived ones included
+  income: [], // newest first. Its own list: never an expense, never a goal add
+  incomeSources: [], // recurring monthly income (e.g. Salary); archived ones included
   lastExport: undefined, // ms
   prefill: null, // set by "Mark paid" for the Add screen to pick up once
 };
@@ -30,6 +33,7 @@ const sortCats = () => state.categories.sort((a, b) => a.order - b.order);
 const sortEntries = () => state.entries.sort(byNewest);
 const sortGoals = () => state.goals.sort((a, b) => a.order - b.order);
 const sortAdds = () => state.goalAdds.sort(byNewest);
+const sortIncome = () => state.income.sort(byNewest);
 const upsert = (list, item) => [...list.filter((x) => x.id !== item.id), item];
 
 export const catById = (id) => state.categories.find((c) => c.id === id);
@@ -37,8 +41,10 @@ export const activeCategories = () => state.categories.filter((c) => !c.archived
 export const currentMonth = () => monthOf(todayYmd());
 
 export async function init() {
-  const [categories, budgetRows, entries, goals, goalAdds, bills] = await Promise.all(['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills'].map((s) => db.getAll(s)));
+  const [categories, budgetRows, entries, goals, goalAdds, bills, income, incomeSources] = await Promise.all(['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources'].map((s) => db.getAll(s)));
   state.categories = categories;
+  state.income = income;
+  state.incomeSources = incomeSources;
   state.goals = goals;
   state.goalAdds = goalAdds;
   state.bills = bills;
@@ -49,6 +55,7 @@ export async function init() {
   sortEntries();
   sortGoals();
   sortAdds();
+  sortIncome();
   if (!categories.length && !(await db.getMeta('seeded'))) await seed();
   // Goals are seeded once per device, including on an upgrade from 1.0.x (which only adds them; nothing is removed).
   if (!(await db.getMeta('goalsSeeded'))) await seedGoals();
@@ -206,6 +213,93 @@ export async function restoreGoalAdd(a) {
   sortAdds();
 }
 
+/** Goal priority is the order goals are listed in. Swap with the neighbour among active goals (dir -1 up, +1 down). */
+export async function moveGoal(id, dir) {
+  const list = state.goals.filter((g) => !g.archived).sort((a, b) => a.order - b.order);
+  const i = list.findIndex((g) => g.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  const a = { ...list[i], order: list[j].order };
+  const b = { ...list[j], order: list[i].order };
+  if (a.order === b.order) b.order += dir; // repair duplicate orders
+  await db.write([{ store: 'goals', put: a }, { store: 'goals', put: b }]);
+  state.goals = state.goals.map((g) => (g.id === a.id ? a : g.id === b.id ? b : g));
+  sortGoals();
+}
+
+/** Several goal adds in one transaction (the allocate sheet): all are saved or none. */
+export async function saveGoalAdds(adds) {
+  const now = Date.now();
+  const rows = adds.map((a, i) => ({ ...a, id: a.id ?? uid(), createdAt: a.createdAt ?? now + i }));
+  await db.write(rows.map((a) => ({ store: 'goalAdds', put: a })));
+  for (const a of rows) state.goalAdds = upsert(state.goalAdds, a);
+  sortAdds();
+  return rows;
+}
+
+export async function deleteGoalAdds(ids) {
+  await db.write(ids.map((id) => ({ store: 'goalAdds', del: id })));
+  state.goalAdds = state.goalAdds.filter((a) => !ids.includes(a.id));
+}
+
+// ---- income ----
+export const sourceById = (id) => state.incomeSources.find((s) => s.id === id);
+
+export async function saveIncome(entry) {
+  const e = { ...entry, id: entry.id ?? uid(), sourceId: entry.sourceId ?? null, createdAt: entry.createdAt ?? Date.now() };
+  await db.put('income', e);
+  state.income = upsert(state.income, e);
+  sortIncome();
+  return e;
+}
+
+export async function deleteIncome(id) {
+  const e = state.income.find((x) => x.id === id);
+  if (!e) return null;
+  await db.write([{ store: 'income', del: id }]);
+  state.income = state.income.filter((x) => x.id !== id);
+  return e;
+}
+
+export async function restoreIncome(e) {
+  await db.put('income', e);
+  state.income = upsert(state.income, e);
+  sortIncome();
+}
+
+export async function saveSource(src) {
+  const s = { ...src, id: src.id ?? uid(), createdAt: src.createdAt ?? Date.now() };
+  await db.put('incomeSources', s);
+  state.incomeSources = upsert(state.incomeSources, s);
+  return s;
+}
+
+/** Confirm a recurring income received (see income.js): logs the entry and moves the source on, in one transaction. */
+export async function receiveSource(id, { amount } = {}) {
+  const before = sourceById(id);
+  const r = receiveIncome(before, { today: todayYmd(), amount });
+  const entry = { ...r.entry, id: uid(), createdAt: Date.now() };
+  await db.write([{ store: 'incomeSources', put: r.source }, { store: 'income', put: entry }]);
+  state.incomeSources = upsert(state.incomeSources, r.source);
+  state.income = upsert(state.income, entry);
+  sortIncome();
+  return { before, after: r.source, entry };
+}
+
+/** Undo a confirmation: the source goes back to how it was and the entry is removed. */
+export async function undoReceive({ before, entry }) {
+  await db.write([{ store: 'incomeSources', put: before }, { store: 'income', del: entry.id }]);
+  state.incomeSources = upsert(state.incomeSources, before);
+  state.income = state.income.filter((x) => x.id !== entry.id);
+}
+
+export async function skipSource(id) {
+  const before = sourceById(id);
+  const after = skipIncomeSource(before);
+  await saveSource(after);
+  return { before, after };
+}
+
 // ---- bills ----
 export const billById = (id) => state.bills.find((b) => b.id === id);
 
@@ -257,6 +351,8 @@ export function exportData(now = new Date()) {
     goals: state.goals,
     goalAdds: [...state.goalAdds].sort(byDate),
     bills: state.bills,
+    income: [...state.income].sort(byDate),
+    incomeSources: state.incomeSources,
   }, now);
 }
 
@@ -269,11 +365,11 @@ export async function markExported(ms = Date.now()) {
  * Replace everything with validated backup data (from parseBackup). A backup from 1.0.x has no goals or bills
  * (`keepGoalData`): the goals, goal adds and bills on this device are then left exactly as they are.
  */
-export async function importData(data, { keepGoalData = false } = {}) {
+export async function importData(data, { keepGoalData = false, keepIncomeData = false } = {}) {
   // Kept bills may link to a category the imported file doesn't have: unlink those, so the next export stays valid.
   const catIds = new Set(data.categories.map((c) => c.id));
   const relinked = keepGoalData ? state.bills.filter((b) => b.categoryId && !catIds.has(b.categoryId)).map((b) => ({ ...b, categoryId: null })) : [];
-  await db.replaceAll(keepGoalData ? { ...data, bills: relinked } : data, { seeded: Date.now(), goalsSeeded: Date.now() }, { keepGoalData });
+  await db.replaceAll(keepGoalData ? { ...data, bills: relinked } : data, { seeded: Date.now(), goalsSeeded: Date.now() }, { keepGoalData, keepIncomeData });
   for (const b of relinked) state.bills = upsert(state.bills, b);
   state.categories = [...data.categories];
   state.budgets = { ...data.budgets };
@@ -283,10 +379,15 @@ export async function importData(data, { keepGoalData = false } = {}) {
     state.goalAdds = [...data.goalAdds];
     state.bills = [...data.bills];
   }
+  if (!keepIncomeData) {
+    state.income = [...data.income];
+    state.incomeSources = [...data.incomeSources];
+  }
   sortCats();
   sortEntries();
   sortGoals();
   sortAdds();
+  sortIncome();
   await ensureCurrentMonth();
 }
 
@@ -298,7 +399,7 @@ function clearCruxLocalStorage() {
 }
 
 /**
- * Wipe CRUX's data (expenses, budgets, categories, goals, goal adds and bills) and put the starter categories and
+ * Wipe CRUX's data (expenses, budgets, categories, goals, goal adds, bills, income and recurring income) and put the starter categories and
  * goals back (₹0 budgets and targets, nothing logged), in one transaction on the "crux" database. Also removes
  * crux-prefixed localStorage keys. Never touches other databases, keys or caches.
  */
@@ -306,7 +407,7 @@ export async function resetToStarter() {
   const month = currentMonth();
   const { now, cats, plan } = starterData(month);
   const goals = starterGoals(now);
-  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [] }, { seeded: now, goalsSeeded: now }, { clearMeta: true });
+  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: now, goalsSeeded: now }, { clearMeta: true });
   clearCruxLocalStorage();
   state.categories = cats;
   state.budgets = { [month]: plan };
@@ -314,16 +415,20 @@ export async function resetToStarter() {
   state.goals = goals;
   state.goalAdds = [];
   state.bills = [];
+  state.income = [];
+  state.incomeSources = [];
   state.lastExport = undefined;
 }
 
 export async function eraseAll() {
-  await db.replaceAll({ categories: [], budgets: {}, entries: [], goals: [], goalAdds: [], bills: [] }, { seeded: Date.now(), goalsSeeded: Date.now(), lastExport: null });
+  await db.replaceAll({ categories: [], budgets: {}, entries: [], goals: [], goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: Date.now(), goalsSeeded: Date.now(), lastExport: null });
   state.categories = [];
   state.budgets = {};
   state.entries = [];
   state.goals = [];
   state.goalAdds = [];
   state.bills = [];
+  state.income = [];
+  state.incomeSources = [];
   state.lastExport = null;
 }

@@ -13,7 +13,7 @@ const MAX_TEXT = 200;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
-export function buildBackup({ categories, budgets, entries, goals = [], goalAdds = [], bills = [] }, now = new Date()) {
+export function buildBackup({ categories, budgets, entries, goals = [], goalAdds = [], bills = [], income = [], incomeSources = [] }, now = new Date()) {
   return {
     app: BACKUP_APP,
     schema: SCHEMA_VERSION,
@@ -25,6 +25,8 @@ export function buildBackup({ categories, budgets, entries, goals = [], goalAdds
     goals,
     goalAdds,
     bills,
+    income,
+    incomeSources,
   };
 }
 
@@ -102,12 +104,24 @@ export function parseBackup(text) {
     ({ goals, goalAdds, bills } = g);
   }
 
+  // Income arrived with schema 3. A backup from 1.0.x or 1.1.x has none: it imports cleanly, and the caller keeps the
+  // income and recurring sources already on the device (hasIncomeData: false).
+  const hasIncomeData = raw.schema >= 3;
+  let income = [];
+  let incomeSources = [];
+  if (hasIncomeData) {
+    const r = parseIncomeData(raw);
+    if (!r.ok) return r;
+    ({ income, incomeSources } = r);
+  }
+
   return {
     ok: true,
-    data: { categories, budgets, entries, goals, goalAdds, bills },
+    data: { categories, budgets, entries, goals, goalAdds, bills, income, incomeSources },
     hasGoalData,
+    hasIncomeData,
     exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : null,
-    counts: { categories: categories.length, entries: entries.length, months: Object.keys(budgets).length, goals: goals.length, goalAdds: goalAdds.length, bills: bills.length },
+    counts: { categories: categories.length, entries: entries.length, months: Object.keys(budgets).length, goals: goals.length, goalAdds: goalAdds.length, bills: bills.length, income: income.length, incomeSources: incomeSources.length },
   };
 }
 
@@ -196,6 +210,29 @@ function parseGoalData(raw, catIds) {
     });
   }
   return { ok: true, goals, goalAdds, bills };
+}
+
+function parseIncomeData(raw) {
+  if (!Array.isArray(raw.income) || !Array.isArray(raw.incomeSources)) return bad('The backup is missing income.');
+  const sources = [];
+  const sourceIds = new Set();
+  for (const [i, s] of raw.incomeSources.entries()) {
+    const amount = orNull(s?.amount);
+    if (!s || !ID.test(s.id) || sourceIds.has(s.id) || !str(s.name).trim() || (amount !== null && !isPaise(amount)) || !isYmd(s.nextDate)) return bad(`Recurring income ${i + 1} is damaged.`);
+    const lastDay = s.lastDay === true;
+    const anchor = lastDay ? 31 : Number.isInteger(s.anchorDay) && s.anchorDay >= 1 && s.anchorDay <= 31 ? s.anchorDay : Number(s.nextDate.slice(8));
+    sourceIds.add(s.id);
+    sources.push({ id: s.id, name: str(s.name, 40).trim(), amount, nextDate: s.nextDate, anchorDay: anchor, lastDay, note: str(s.note), archived: s.archived === true, createdAt: Number.isFinite(s.createdAt) ? s.createdAt : 0 });
+  }
+  const entries = [];
+  const ids = new Set();
+  for (const [i, e] of raw.income.entries()) {
+    const sourceId = orNull(e?.sourceId);
+    if (!e || !ID.test(e.id) || ids.has(e.id) || !str(e.source).trim() || !isPaise(e.amount) || e.amount === 0 || !isYmd(e.date) || (sourceId !== null && !sourceIds.has(sourceId))) return bad(`Income entry ${i + 1} is damaged.`);
+    ids.add(e.id);
+    entries.push({ id: e.id, sourceId, source: str(e.source, 40).trim(), amount: e.amount, date: e.date, note: str(e.note), createdAt: Number.isFinite(e.createdAt) ? e.createdAt : 0 });
+  }
+  return { ok: true, income: entries, incomeSources: sources };
 }
 
 /** Show the backup reminder when there's data and the last export is missing or over 14 days old. */

@@ -51,6 +51,8 @@ const PATHS = {
   bills: ['M5 5h14v15H5z', 'M5 10h14', 'M9 3v4', 'M15 3v4', 'M9 15l2 2 4-4'],
   menu: ['M4 7h16', 'M4 12h16', 'M4 17h16'],
   minus: ['M5 12h14'],
+  income: ['M12 4v12', 'M7 11l5 5 5-5', 'M5 20h14'],
+  month: ['M4 6h16v14H4z', 'M4 11h16', 'M9 15h6'],
 };
 
 const NS = 'http://www.w3.org/2000/svg';

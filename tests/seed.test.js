@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS } from '../js/seed.js';
+import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS, GOAL_STARTERS } from '../js/seed.js';
 
 const NAMES = ['Rent', 'Bike EMI', 'Buffer/Miscellaneous', 'Groceries', 'CC Payment', 'Dine In/Out', 'Gym', 'Petrol', 'Bhatuk',
   'Insurance', 'Subscriptions', 'Wifi', 'Furniture', 'Electricity', 'Supplements', 'Cosmetics', 'Bike Maintenance', 'Phone Bill'];
@@ -28,4 +28,11 @@ test('three starter goals, in order, with no targets (₹0): real targets are en
   assert.deepEqual(SEED_GOALS.map((g) => g.name), ['Emergency fund', 'Wedding fund', 'Long-term investments']);
   for (const g of SEED_GOALS) assert.ok(!('target' in g) && !('amount' in g), 'no amounts in the seed');
   assert.equal(new Set(SEED_GOALS.map((g) => g.emoji)).size, 3);
+});
+
+test('the goal picker offers the five suggested starters, none of which is a seeded goal', () => {
+  assert.deepEqual(GOAL_STARTERS.map((g) => g.name), ['Brother’s education', 'Car', 'Travel fund', 'Honeymoon', 'Custom']);
+  assert.deepEqual(GOAL_STARTERS.filter((g) => g.custom).map((g) => g.name), ['Custom']);
+  for (const s of GOAL_STARTERS) assert.ok(!SEED_GOALS.some((g) => g.name === s.name), `${s.name} must not be created by default`);
+  assert.equal(SEED_GOALS.length, 3);
 });

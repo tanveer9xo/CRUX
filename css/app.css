@@ -409,3 +409,47 @@ input[type="date"].input { color-scheme: dark; }
 .paying { padding: 12px 14px; margin-bottom: 14px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--text); }
 .paying > * + * { margin-top: 6px; }
 .field > .chips { margin-top: 2px; }
+
+/* ================= 1.2.0: income, month plan, allocate, savings ================= */
+.seg4 { grid-template-columns: repeat(4, 1fr); gap: 2px; }
+.seg4 .seg { font-size: 0.82rem; padding: 0 2px; }
+.plan-card > * + * { margin-top: 6px; }
+.plan-line { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.plan-line .op { width: 1.1em; text-align: center; color: var(--faint); font-weight: 700; flex: none; }
+.plan-line .link { padding: 6px 0 6px 6px; font-size: 0.85rem; }
+.ind { padding-left: 2.1em; }
+.plan-goals { list-style: none; margin: 0; padding-left: 2.1em; display: flex; flex-direction: column; gap: 2px; }
+.result { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin-top: 10px; padding: 12px 14px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--good) 14%, var(--surface-2)); font-size: 1.1rem; }
+.result strong { font-size: 1.6rem; letter-spacing: -0.02em; }
+.result.warn { background: color-mix(in srgb, var(--warn) 18%, var(--surface-2)); color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, transparent); }
+.note-record { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.month-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.month-card .stat { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.month-card .stat.warn { background: color-mix(in srgb, var(--warn) 16%, var(--surface-2)); color: var(--warn); }
+.month-card .stat-val { font-size: 1.4rem; }
+.month-card .section-head h2 { margin: 0 0 8px; color: var(--text); }
+.month-card .btn { width: 100%; }
+.prio { flex: none; min-width: 2.2em; padding: 2px 8px; border-radius: 99px; background: var(--surface-3); color: var(--muted); font-size: 0.78rem; font-weight: 700; text-align: center; }
+.goal-tools { display: flex; align-items: center; gap: 0; flex: none; }
+.alloc-head { text-align: left; }
+.alloc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.alloc-row { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); display: flex; flex-direction: column; gap: 6px; }
+.alloc-top { display: flex; align-items: center; gap: 8px; }
+.alloc-name { flex: 1; min-width: 0; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alloc-amt { position: relative; display: flex; align-items: center; width: 8.5em; flex: none; }
+.alloc-input { padding: 0 10px 0 24px; text-align: right; font-weight: 650; background: var(--surface); }
+.alloc-row .ind { padding-left: 0; }
+.alloc-bucket { background: var(--surface); }
+.alloc-summary { padding: 10px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--good) 14%, var(--surface-2)); font-weight: 650; }
+.alloc-summary.bad { background: color-mix(in srgb, var(--over) 18%, var(--surface-2)); color: var(--over); }
+.starter-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.starter { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 8px 14px; border: 0; border-radius: var(--radius-sm); background: var(--surface-2); text-align: left; font-weight: 650; }
+.starter:disabled { opacity: 0.5; }
+.starter .ic { color: var(--faint); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; list-style: none; margin: 0 0 4px; padding: 0; font-size: 0.85rem; }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.rate-table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 0.82rem; }
+.rate-table th, .rate-table td { padding: 8px 4px; text-align: right; border-bottom: 1px solid var(--line); }
+.rate-table th:first-child { text-align: left; font-weight: 650; }
+.rate-table thead th { color: var(--muted); font-weight: 600; }
+.income-expected .bill-row { background: var(--surface-2); }
