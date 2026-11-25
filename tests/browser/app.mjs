@@ -30,7 +30,7 @@ writeFileSync(join(WORK, 'www', 'VANE', 'index.html'), '<!doctype html><link rel
 const server = spawn('python3', ['-m', 'http.server', String(HTTP), '--bind', '127.0.0.1'], { cwd: join(WORK, 'www'), stdio: 'ignore' });
 const chrome = spawn(CHROME, [
   '--headless=new', `--remote-debugging-port=${CDP}`, `--user-data-dir=${join(WORK, 'profile')}`,
-  '--no-first-run', '--no-default-browser-check', ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank',
+  '--no-first-run', '--no-default-browser-check', ...(process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : []), 'about:blank',
 ], { stdio: 'ignore' });
 
 let failures = 0;
@@ -45,7 +45,8 @@ process.on('exit', () => { try { chrome.kill(); server.kill(); } catch { /* */ }
 setTimeout(() => { console.error('ERROR timed out'); finish(3); }, 240000).unref();
 
 let target;
-for (let i = 0; i < 75 && !target; i++) {
+// Up to 40 s: a cold CI runner can take a while to bring Chrome up.
+for (let i = 0; i < 200 && !target; i++) {
   try { target = (await (await fetch(`http://127.0.0.1:${CDP}/json/list`)).json()).find((t) => t.type === 'page'); } catch { await sleep(200); }
 }
 if (!target) throw new Error('Chrome did not start');
