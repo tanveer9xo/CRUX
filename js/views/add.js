@@ -2,7 +2,8 @@
 import { h, icon, toast, confirmDialog } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { todayYmd, addDays, isYmd } from '../dates.js';
-import { state, saveEntry, deleteEntry, restoreEntry, activeCategories, catById } from '../store.js';
+import { state, saveEntry, deleteEntry, restoreEntry, activeCategories, catById, restoreBill } from '../store.js';
+import { dayLabel } from '../dates.js';
 import { go, goBack, refresh } from '../router.js';
 import { requestPersistence } from '../pwa.js';
 import { emptyState } from './common.js';
@@ -11,10 +12,15 @@ export const name = 'add';
 export const tab = 'add';
 export const isEditor = true;
 export let title = 'Add';
+let focusAmount = true;
 
 export function render({ params }) {
   const editing = params.id ? state.entries.find((e) => e.id === params.id) : null;
-  title = editing ? 'Edit' : 'Add';
+  // "Mark paid" on a bill that logs expenses lands here once, with the amount and category filled in.
+  const pre = !editing ? state.prefill : null;
+  state.prefill = null;
+  focusAmount = !(pre && pre.amount);
+  title = editing ? 'Edit' : pre ? 'Log payment' : 'Add';
   if (params.id && !editing) {
     return h('div', { class: 'page' }, emptyState('This expense no longer exists', null, h('a', { class: 'btn', href: '#/' }, 'Home')));
   }
@@ -25,14 +31,14 @@ export function render({ params }) {
     return h('div', { class: 'page' }, emptyState('No categories', 'Add a category in Plan first.', h('a', { class: 'btn', href: '#/plan' }, 'Open Plan')));
   }
 
-  let selected = editing?.categoryId ?? null;
+  let selected = editing?.categoryId ?? (pre?.categoryId && catById(pre.categoryId) && !catById(pre.categoryId).archived ? pre.categoryId : null);
   const today = todayYmd();
   const err = h('p', { class: 'form-error', role: 'alert' });
 
   const amount = h('input', {
     id: 'amount', class: 'amount-input num', type: 'text', inputmode: 'decimal', enterkeyhint: 'done',
     autocomplete: 'off', placeholder: '0', 'aria-label': 'Amount in rupees', 'aria-describedby': 'amount-err',
-    value: editing ? paiseToInput(editing.amount) : '',
+    value: editing ? paiseToInput(editing.amount) : pre?.amount ? paiseToInput(pre.amount) : '',
     oninput: () => { amount.value = amount.value.replace(/[^\d.,]/g, ''); err.textContent = ''; },
     onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } },
   });
@@ -55,7 +61,7 @@ export function render({ params }) {
   const syncDay = () => dayBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(date.value === [today, addDays(today, -1)][i])));
   syncDay();
 
-  const note = h('input', { id: 'note', type: 'text', class: 'input', maxlength: '200', placeholder: 'Note (optional)', value: editing?.note ?? '', enterkeyhint: 'done', onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } } });
+  const note = h('input', { id: 'note', type: 'text', class: 'input', maxlength: '200', placeholder: 'Note (optional)', value: editing?.note ?? pre?.note ?? '', enterkeyhint: 'done', onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } } });
 
   let saving = false;
   async function save() {
@@ -89,6 +95,10 @@ export function render({ params }) {
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Cancel', onclick: goBack }, icon('x')),
       h('h1', {}, editing ? 'Edit expense' : 'Add expense'),
       editing ? h('button', { class: 'icon-btn danger', type: 'button', 'aria-label': 'Delete expense', onclick: remove }, icon('trash')) : h('span', { class: 'icon-btn-spacer' })),
+    pre ? h('div', { class: 'note paying', id: 'paying', role: 'status' },
+      h('p', {}, h('strong', {}, `${pre.billName} marked paid.`), pre.after.archived ? ' It’s finished and archived.' : ` Next due ${dayLabel(pre.after.dueDate)}.`),
+      h('p', { class: 'muted small' }, 'Save to log the expense, or close this screen to skip logging.'),
+      h('button', { class: 'btn btn-small', type: 'button', id: 'undo-paid', onclick: async () => { await restoreBill(pre.before); goBack(); toast('Marked paid undone'); } }, 'Undo mark paid')) : null,
     h('form', { class: 'add-form', novalidate: true, onsubmit: (e) => { e.preventDefault(); save(); } },
       h('label', { class: 'amount-wrap', for: 'amount' }, h('span', { class: 'rupee', 'aria-hidden': 'true' }, '₹'), amount),
       err,
@@ -100,6 +110,6 @@ export function render({ params }) {
 
 /** Focus the amount right away (same tap as the + button, so iOS opens the number keyboard). */
 export function after(main, r) {
-  if (r.params.id) return;
+  if (r.params.id || !focusAmount) return;
   main.querySelector('#amount')?.focus();
 }

@@ -21,13 +21,38 @@ Your data stays in this browser's IndexedDB on your device.
 - **Backup:** export a JSON file, or import one (CRUX shows what's in it and asks before replacing anything).
   A banner reminds you when your last export is more than 14 days old.
 
+- **Goals:** savings and investments. A goal has a name, an optional target amount and date, an optional planned amount
+  per month, and optional buckets (Savings account, FD, Liquid fund…). Log money added, or withdraw (a negative add).
+  Each goal shows saved so far, % of target, what's left, this month against the plan, the monthly amount needed to
+  reach the target by its date (only when both are set), and the split by bucket. Goal money is kept apart from
+  expenses and never counts toward spending, budgets, month-to-date comparisons or trends. Insights shows one line,
+  "Saved this month". Three goals are seeded with ₹0 targets.
+- **Bills & renewals:** credit card dues, EMIs, insurance, subscriptions, bills. Each has a recurrence, a next due date
+  and a warning window. Overdue (red), due soon (amber) and later are shown on the Bills screen, and Home shows an
+  Upcoming card when something is overdue or inside its window. In-app only: there are no push notifications.
+  Mark paid moves the date on and offers to log the expense (amount and category prefilled; the toggle defaults
+  ON, but OFF for credit card dues so card bills aren't counted twice). Skip this one moves the date with no expense.
+  EMIs count instalments down and archive themselves at zero or past their end date, with Undo.
+
 Amounts are stored as whole paise (integers), never as floating-point rupees. They are shown in INR with Indian digit grouping (₹1,25,000).
+
+## Navigation
+
+The tab bar is Home, History, **+**, Goals, Bills. Insights, Plan and Settings are in the menu (☰) at the top right of
+every screen, and Home links to Insights and Plan too.
+
+## Data and upgrades
+
+IndexedDB database `crux`, schema version 2: `categories`, `budgets`, `entries`, `goals`, `goalAdds`, `bills`, `meta`.
+Upgrading from 1.0.x only adds the three new stores, so existing data is untouched (the browser test builds a real
+version-1 database and upgrades it). Backups are schema 2 and carry goals, goal entries and bills; a backup exported
+from 1.0.x still imports, and keeps the goals and bills already on the device.
 
 ## Run it locally
 
 ```bash
 npm start            # http://localhost:8080
-npm test             # unit tests (maths, dates, budgets, backup, release checks), in several time zones
+npm test             # unit tests (money, dates, budgets, goals, bills, backup, release checks), in several time zones
 npm run test:browser # headless Chrome: the built site served under /CRUX/, end to end
 npm run icons        # re-render icons from js/brand.js
 ```

@@ -3,12 +3,13 @@ import { h, icon, badge, bar, svgEl, statusText } from '../ui.js';
 import { formatINR, formatCompact } from '../money.js';
 import { todayYmd, monthOf, addMonths, rangeLabel, monthLabel, monthName, daysLeftInMonth, isMonth } from '../dates.js';
 import { monthToDate, fullMonth, trend, progress, monthSpend, dailyAllowance, completedMonths } from '../insights.js';
+import { savedInMonth } from '../goals.js';
 import { state, planFor, catById } from '../store.js';
 import { setQuery } from '../router.js';
 import { monthNav, deltaPill, emptyState, pageHead } from './common.js';
 
 export const name = 'insights';
-export const tab = 'insights';
+export const tab = null;
 export const title = 'Insights';
 
 const TABS = [['mtd', 'Month to date'], ['months', 'Months'], ['budget', 'Budget']];
@@ -57,6 +58,9 @@ function mtdView(today) {
   return h('div', { role: 'tabpanel' },
     h('p', { class: 'muted small lede' }, `${cur} compared with ${prev}.`),
     totalCompare(r.total, `Spent ${cur}`, prev),
+    // Money put into goals. Kept out of every spending figure on this screen.
+    h('p', { class: 'saved-line', id: 'insights-saved' }, h('span', { class: 'muted' }, 'Saved this month: '), h('strong', { class: 'num' }, formatINR(savedInMonth(state.goalAdds, monthOf(today)))),
+      h('a', { class: 'link', href: '#/goals' }, 'Goals')),
     r.rows.length ? h('section', {}, h('h2', {}, 'By category'), compareList(r.rows)) : emptyState('Nothing to compare yet', 'Add expenses and this fills in.'));
 }
 

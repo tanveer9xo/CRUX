@@ -1,0 +1,20 @@
+{
+  "app": "crux",
+  "schema": 1,
+  "appVersion": "1.0.2",
+  "exportedAt": "2026-11-20T09:30:00.000Z",
+  "categories": [
+    { "id": "cat_rent", "name": "Rent", "emoji": "🏠", "color": "#3987E5", "order": 0, "archived": false, "createdAt": 1700000000000 },
+    { "id": "cat_food", "name": "Groceries", "emoji": "🛒", "color": "#199E70", "order": 1, "archived": false, "createdAt": 1700000000001 },
+    { "id": "cat_old", "name": "Old category", "emoji": "📦", "color": "#7C8796", "order": 2, "archived": true, "createdAt": 1700000000002 }
+  ],
+  "budgets": {
+    "2026-10": { "cat_rent": 1000000, "cat_food": 300000, "cat_old": 50000 },
+    "2026-11": { "cat_rent": 1000000, "cat_food": 350000 }
+  },
+  "entries": [
+    { "id": "e_one", "amount": 125050, "categoryId": "cat_food", "date": "2026-11-03", "note": "weekly veg", "createdAt": 1700000100000, "updatedAt": 1700000100000 },
+    { "id": "e_two", "amount": 1000000, "categoryId": "cat_rent", "date": "2026-11-01", "note": "", "createdAt": 1700000200000, "updatedAt": 1700000200000 },
+    { "id": "e_three", "amount": 9900, "categoryId": "cat_old", "date": "2026-10-15", "note": "before archive", "createdAt": 1700000300000, "updatedAt": 1700000300000 }
+  ]
+}

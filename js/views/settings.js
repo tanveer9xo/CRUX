@@ -4,7 +4,7 @@ import { todayYmd } from '../dates.js';
 import { parseBackup, backupFileName, daysSince } from '../backup.js';
 import { APP_VERSION } from '../version.js';
 import { state, exportData, markExported, importData, eraseAll, resetToStarter } from '../store.js';
-import { SEED_CATEGORIES } from '../seed.js';
+import { SEED_CATEGORIES, SEED_GOALS } from '../seed.js';
 import { install, promptInstall, installHelp, isStandalone, isIOS, checkForUpdate, isPersisted, requestPersistence } from '../pwa.js';
 import { go, refresh } from '../router.js';
 import { pageHead } from './common.js';
@@ -49,18 +49,20 @@ async function doImport(fileInput) {
     return;
   }
   const when = r.exportedAt ? new Date(r.exportedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'an unknown date';
+  const c = r.counts;
   const ok = await confirmDialog({
     title: 'Replace all your data?',
     body: [
-      `The backup from ${when} has ${r.counts.entries} expenses in ${r.counts.categories} categories.`,
-      `It will replace everything here now: ${state.entries.length} expenses and ${state.categories.length} categories. This can’t be undone.`,
-      state.entries.length ? 'If you’re not sure, cancel and export first.' : null,
+      `The backup from ${when} has ${c.entries} expenses in ${c.categories} categories` + (r.hasGoalData ? `, ${c.goals} goals with ${c.goalAdds} entries, and ${c.bills} bills.` : '.'),
+      `It will replace everything here now: ${state.entries.length} expenses and ${state.categories.length} categories` + (r.hasGoalData ? `, ${state.goals.length} goals with ${state.goalAdds.length} entries, and ${state.bills.length} bills. This can’t be undone.` : '. This can’t be undone.'),
+      r.hasGoalData ? null : `This file is from an older version and has no goals or bills, so your ${state.goals.length} goals (${state.goalAdds.length} entries) and ${state.bills.length} bills here are kept as they are.`,
+      state.entries.length || state.goals.length || state.bills.length ? 'If you’re not sure, cancel and export first.' : null,
     ].filter(Boolean),
     ok: 'Replace', danger: true,
   });
   if (!ok) return;
-  await importData(r.data);
-  toast(`Imported ${r.counts.entries} expenses`);
+  await importData(r.data, { keepGoalData: !r.hasGoalData });
+  toast(`Imported ${c.entries} expenses` + (r.hasGoalData ? `, ${c.goals} goals and ${c.bills} bills` : ''));
   go('#/');
 }
 
@@ -75,7 +77,7 @@ function resetDialog() {
       },
     }, icon('download'), 'Export a backup first');
     return h('div', { class: 'sheet-body' },
-      h('p', { class: 'muted' }, `This deletes all ${state.entries.length} expenses, every budget and all your categories on this device, and puts back the ${SEED_CATEGORIES.length} starter categories with ₹0 budgets.`),
+      h('p', { class: 'muted', id: 'reset-text' }, `This deletes all ${state.entries.length} expenses, every budget, all your categories, ${state.goals.length} goals (with ${state.goalAdds.length} entries) and ${state.bills.length} bills on this device, and puts back the ${SEED_CATEGORIES.length} starter categories with ₹0 budgets and the ${SEED_GOALS.length} starter goals with ₹0 targets.`),
       h('p', { class: 'muted' }, 'Only CRUX’s own data is deleted; nothing else on this site is touched. It can’t be undone, so export a backup first if you might want your data back.'),
       status,
       exportBtn,
@@ -146,16 +148,16 @@ export function render({ query }) {
 
     h('section', { class: 'card danger-zone' },
       h('h2', {}, 'Reset to starter categories'),
-      h('p', { class: 'muted' }, `Deletes your expenses, budgets and categories, then restores the ${SEED_CATEGORIES.length} starter categories at ₹0. Export a backup first.`),
+      h('p', { class: 'muted' }, `Deletes your expenses, budgets, categories, goals and bills, then restores the ${SEED_CATEGORIES.length} starter categories at ₹0 and the ${SEED_GOALS.length} starter goals. Export a backup first.`),
       h('button', { class: 'btn btn-ghost-danger', type: 'button', id: 'reset-btn', onclick: resetDialog }, icon('refresh'), 'Reset to starter categories')),
 
     h('section', { class: 'card danger-zone' },
       h('h2', {}, 'Erase everything'),
-      h('p', { class: 'muted' }, 'Deletes every category, budget and expense on this device.'),
+      h('p', { class: 'muted' }, 'Deletes every category, budget, expense, goal and bill on this device, and doesn’t put anything back.'),
       h('button', {
         class: 'btn btn-ghost-danger', type: 'button',
         onclick: async () => {
-          const ok = await confirmDialog({ title: 'Erase all data?', body: [`${state.entries.length} expenses and ${state.categories.length} categories will be deleted from this device.`, 'This can’t be undone. Export first if you might want them back.'], ok: 'Erase everything', danger: true });
+          const ok = await confirmDialog({ title: 'Erase all data?', body: [`${state.entries.length} expenses, ${state.categories.length} categories, ${state.goals.length} goals (${state.goalAdds.length} entries) and ${state.bills.length} bills will be deleted from this device.`, 'Only CRUX’s own data is deleted. This can’t be undone. Export first if you might want them back.'], ok: 'Erase everything', danger: true });
           if (!ok) return;
           await eraseAll();
           toast('All data erased');

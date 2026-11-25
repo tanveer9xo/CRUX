@@ -5,13 +5,18 @@ import { todayYmd, monthOf } from './dates.js';
 import { rollover, setBudget as setBudgetPure, budgetsFor } from './budget.js';
 import { buildBackup } from './backup.js';
 import { byNewest } from './insights.js';
-import { SEED_CATEGORIES, SEED_BUDGET, COLORS } from './seed.js';
+import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS } from './seed.js';
+import { markPaid as billMarkPaid, skipOne as billSkipOne, sweepEnded } from './bills.js';
 
 export const state = {
   categories: [], // sorted by order
   budgets: {}, // { month: { categoryId: paise } }
   entries: [], // newest first
+  goals: [], // sorted by order; archived ones included
+  goalAdds: [], // newest first. A separate list from entries: never counted as spending
+  bills: [], // archived ones included
   lastExport: undefined, // ms
+  prefill: null, // set by "Mark paid" for the Add screen to pick up once
 };
 
 export { COLORS };
@@ -23,21 +28,42 @@ export const uid = () => {
 
 const sortCats = () => state.categories.sort((a, b) => a.order - b.order);
 const sortEntries = () => state.entries.sort(byNewest);
+const sortGoals = () => state.goals.sort((a, b) => a.order - b.order);
+const sortAdds = () => state.goalAdds.sort(byNewest);
+const upsert = (list, item) => [...list.filter((x) => x.id !== item.id), item];
 
 export const catById = (id) => state.categories.find((c) => c.id === id);
 export const activeCategories = () => state.categories.filter((c) => !c.archived);
 export const currentMonth = () => monthOf(todayYmd());
 
 export async function init() {
-  const [categories, budgetRows, entries] = await Promise.all([db.getAll('categories'), db.getAll('budgets'), db.getAll('entries')]);
+  const [categories, budgetRows, entries, goals, goalAdds, bills] = await Promise.all(['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills'].map((s) => db.getAll(s)));
   state.categories = categories;
+  state.goals = goals;
+  state.goalAdds = goalAdds;
+  state.bills = bills;
   state.budgets = Object.fromEntries(budgetRows.map((r) => [r.month, r.plan]));
   state.entries = entries;
   state.lastExport = await db.getMeta('lastExport');
   sortCats();
   sortEntries();
+  sortGoals();
+  sortAdds();
   if (!categories.length && !(await db.getMeta('seeded'))) await seed();
+  // Goals are seeded once per device, including on an upgrade from 1.0.x (which only adds them; nothing is removed).
+  if (!(await db.getMeta('goalsSeeded'))) await seedGoals();
   await ensureCurrentMonth();
+}
+
+function starterGoals(now) {
+  return SEED_GOALS.map(({ name, emoji }, i) => ({ id: uid(), name, emoji, target: 0, targetDate: null, monthlyPlan: 0, buckets: [], archived: false, order: i, createdAt: now }));
+}
+
+async function seedGoals() {
+  const now = Date.now();
+  const goals = starterGoals(now);
+  await db.write([...goals.map((g) => ({ store: 'goals', put: g })), { store: 'meta', put: { key: 'goalsSeeded', value: now } }]);
+  state.goals = goals;
 }
 
 function starterData(month) {
@@ -146,9 +172,92 @@ export async function restoreCategory(id, month) {
   await setBudget(month, id, last);
 }
 
+// ---- goals ----
+export const goalById = (id) => state.goals.find((g) => g.id === id);
+export const activeGoals = () => state.goals.filter((g) => !g.archived);
+
+export async function saveGoal(goal) {
+  const g = { ...goal, id: goal.id ?? uid(), order: goal.order ?? Math.max(-1, ...state.goals.map((x) => x.order)) + 1, createdAt: goal.createdAt ?? Date.now() };
+  await db.put('goals', g);
+  state.goals = upsert(state.goals, g);
+  sortGoals();
+  return g;
+}
+
+export async function saveGoalAdd(add) {
+  const a = { ...add, id: add.id ?? uid(), createdAt: add.createdAt ?? Date.now() };
+  await db.put('goalAdds', a);
+  state.goalAdds = upsert(state.goalAdds, a);
+  sortAdds();
+  return a;
+}
+
+export async function deleteGoalAdd(id) {
+  const a = state.goalAdds.find((x) => x.id === id);
+  if (!a) return null;
+  await db.write([{ store: 'goalAdds', del: id }]);
+  state.goalAdds = state.goalAdds.filter((x) => x.id !== id);
+  return a;
+}
+
+export async function restoreGoalAdd(a) {
+  await db.put('goalAdds', a);
+  state.goalAdds = upsert(state.goalAdds, a);
+  sortAdds();
+}
+
+// ---- bills ----
+export const billById = (id) => state.bills.find((b) => b.id === id);
+
+export async function saveBill(bill) {
+  const b = { ...bill, id: bill.id ?? uid(), createdAt: bill.createdAt ?? Date.now() };
+  await db.put('bills', b);
+  state.bills = upsert(state.bills, b);
+  return b;
+}
+
+/** Mark paid (see bills.js): returns { before, after, expense, archivedReason }; `before` is what Undo restores. */
+export async function markBillPaid(id) {
+  const before = billById(id);
+  const r = billMarkPaid(before);
+  await saveBill(r.bill);
+  return { before, after: r.bill, expense: r.expense, archivedReason: r.archivedReason };
+}
+
+export async function skipBill(id) {
+  const before = billById(id);
+  const r = billSkipOne(before);
+  await saveBill(r.bill);
+  return { before, after: r.bill, archivedReason: r.archivedReason };
+}
+
+export const restoreBill = (before) => saveBill(before);
+
+/** Archive bills that have run out (no instalments left, or past their end date). Returns [{ before, after }] for Undo. */
+export async function sweepEndedBills() {
+  const swept = sweepEnded(state.bills);
+  if (!swept.length) return [];
+  await db.write(swept.map((s) => ({ store: 'bills', put: s.after })));
+  for (const s of swept) state.bills = upsert(state.bills, s.after);
+  return swept;
+}
+
+export async function restoreBills(swept) {
+  await db.write(swept.map((s) => ({ store: 'bills', put: s.before })));
+  for (const s of swept) state.bills = upsert(state.bills, s.before);
+}
+
 // ---- backup ----
 export function exportData(now = new Date()) {
-  return buildBackup({ categories: state.categories, budgets: state.budgets, entries: [...state.entries].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt)) }, now);
+  const byDate = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt);
+  return buildBackup({
+    categories: state.categories,
+    budgets: state.budgets,
+    entries: [...state.entries].sort(byDate),
+    goals: state.goals,
+    goalAdds: [...state.goalAdds].sort(byDate),
+    bills: state.bills,
+  }, now);
 }
 
 export async function markExported(ms = Date.now()) {
@@ -156,14 +265,28 @@ export async function markExported(ms = Date.now()) {
   state.lastExport = ms;
 }
 
-/** Replace everything with validated backup data (from parseBackup). */
-export async function importData(data) {
-  await db.replaceAll(data, { seeded: Date.now() });
+/**
+ * Replace everything with validated backup data (from parseBackup). A backup from 1.0.x has no goals or bills
+ * (`keepGoalData`): the goals, goal adds and bills on this device are then left exactly as they are.
+ */
+export async function importData(data, { keepGoalData = false } = {}) {
+  // Kept bills may link to a category the imported file doesn't have: unlink those, so the next export stays valid.
+  const catIds = new Set(data.categories.map((c) => c.id));
+  const relinked = keepGoalData ? state.bills.filter((b) => b.categoryId && !catIds.has(b.categoryId)).map((b) => ({ ...b, categoryId: null })) : [];
+  await db.replaceAll(keepGoalData ? { ...data, bills: relinked } : data, { seeded: Date.now(), goalsSeeded: Date.now() }, { keepGoalData });
+  for (const b of relinked) state.bills = upsert(state.bills, b);
   state.categories = [...data.categories];
   state.budgets = { ...data.budgets };
   state.entries = [...data.entries];
+  if (!keepGoalData) {
+    state.goals = [...data.goals];
+    state.goalAdds = [...data.goalAdds];
+    state.bills = [...data.bills];
+  }
   sortCats();
   sortEntries();
+  sortGoals();
+  sortAdds();
   await ensureCurrentMonth();
 }
 
@@ -175,24 +298,32 @@ function clearCruxLocalStorage() {
 }
 
 /**
- * Wipe CRUX's data and put the starter categories back (₹0 budgets, no expenses), in one transaction on the
- * "crux" database. Also removes crux-prefixed localStorage keys. Never touches other databases, keys or caches.
+ * Wipe CRUX's data (expenses, budgets, categories, goals, goal adds and bills) and put the starter categories and
+ * goals back (₹0 budgets and targets, nothing logged), in one transaction on the "crux" database. Also removes
+ * crux-prefixed localStorage keys. Never touches other databases, keys or caches.
  */
 export async function resetToStarter() {
   const month = currentMonth();
   const { now, cats, plan } = starterData(month);
-  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [] }, { seeded: now }, { clearMeta: true });
+  const goals = starterGoals(now);
+  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [] }, { seeded: now, goalsSeeded: now }, { clearMeta: true });
   clearCruxLocalStorage();
   state.categories = cats;
   state.budgets = { [month]: plan };
   state.entries = [];
+  state.goals = goals;
+  state.goalAdds = [];
+  state.bills = [];
   state.lastExport = undefined;
 }
 
 export async function eraseAll() {
-  await db.replaceAll({ categories: [], budgets: {}, entries: [] }, { seeded: Date.now(), lastExport: null });
+  await db.replaceAll({ categories: [], budgets: {}, entries: [], goals: [], goalAdds: [], bills: [] }, { seeded: Date.now(), goalsSeeded: Date.now(), lastExport: null });
   state.categories = [];
   state.budgets = {};
   state.entries = [];
+  state.goals = [];
+  state.goalAdds = [];
+  state.bills = [];
   state.lastExport = null;
 }

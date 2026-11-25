@@ -1,5 +1,5 @@
 // Pieces shared by several screens.
-import { h, icon, badge } from '../ui.js';
+import { h, icon, badge, sheet } from '../ui.js';
 import { formatINR } from '../money.js';
 import { monthLabel, addMonths, dayLabel } from '../dates.js';
 import { catById } from '../store.js';
@@ -40,4 +40,21 @@ export function emptyState(title, text, action) {
   return h('div', { class: 'empty' }, h('p', { class: 'empty-title' }, title), text && h('p', { class: 'muted' }, text), action);
 }
 
-export const pageHead = (title, ...extra) => h('header', { class: 'page-head' }, h('h1', {}, title), ...extra);
+const MENU = [
+  ['#/insights', 'Insights', 'chart', 'Spending against last month, trends, budget progress'],
+  ['#/plan', 'Plan', 'plan', 'Categories and monthly budgets'],
+  ['#/settings', 'Settings', 'gear', 'Backup, install, updates, reset'],
+];
+
+/** The menu that holds the screens that aren't on the tab bar (Goals and Bills got those slots). */
+export function openMenu() {
+  sheet('More', (close) => h('nav', { class: 'menu-list', 'aria-label': 'More screens' },
+    MENU.map(([href, label, ic, desc]) => h('a', {
+      class: `menu-item${location.hash.split('?')[0] === href ? ' current' : ''}`, href,
+      onclick: (e) => { e.preventDefault(); close(); go(href); },
+    }, icon(ic), h('span', { class: 'menu-text' }, h('strong', {}, label), h('span', { class: 'muted small' }, desc))))));
+}
+
+export const menuButton = () => h('button', { class: 'icon-btn', type: 'button', id: 'menu-btn', 'aria-label': 'More: Insights, Plan, Settings', onclick: openMenu }, icon('menu'));
+
+export const pageHead = (title, ...extra) => h('header', { class: 'page-head' }, h('h1', {}, title), h('div', { class: 'head-actions' }, ...extra, menuButton()));

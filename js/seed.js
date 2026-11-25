@@ -28,3 +28,11 @@ export const SEED_BUDGET = 0; // paise
 // Swatches offered when adding or editing a category: the seed colours (the first eight are the validated
 // dark-mode categorical steps; the rest extend them). Status colours (amber, red) stay out of the UI's own use.
 export const COLORS = SEED_CATEGORIES.map((c) => c.color);
+
+// First-run goals. Targets are ₹0 (none set): real targets are entered in the app. "Long-term investments" may stay
+// without a target for good.
+export const SEED_GOALS = [
+  { name: 'Emergency fund', emoji: '🛟' },
+  { name: 'Wedding fund', emoji: '💍' },
+  { name: 'Long-term investments', emoji: '📈' },
+];

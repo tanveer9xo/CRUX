@@ -11,7 +11,7 @@ import { refresh, setQuery, go } from '../router.js';
 import { monthNav, pageHead } from './common.js';
 
 export const name = 'plan';
-export const tab = 'plan';
+export const tab = null;
 export const title = 'Plan';
 
 export function render({ query }) {
@@ -25,7 +25,7 @@ export function render({ query }) {
   const past = month < currentMonth();
 
   return h('div', { class: 'page plan' },
-    pageHead('Plan', h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Settings', onclick: () => go('#/settings') }, icon('gear'))),
+    pageHead('Plan'),
     monthNav(month, (m) => setQuery({ m: m === currentMonth() ? null : m })),
     h('p', { class: `note ${past ? 'note-warn' : ''}` },
       past ? `You’re editing a past month. Changes apply to ${monthLabel(month)} and every month after it.`

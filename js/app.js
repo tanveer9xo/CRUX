@@ -1,14 +1,16 @@
 // Start-up: open the database, roll the plan into the current month, register routes and the service worker.
-import { init, ensureCurrentMonth } from './store.js';
+import { init, ensureCurrentMonth, sweepEndedBills, restoreBills } from './store.js';
 import { register, start, go, refresh } from './router.js';
 import { registerServiceWorker } from './pwa.js';
 import { todayYmd } from './dates.js';
-import { h } from './ui.js';
+import { h, toast } from './ui.js';
 import * as home from './views/home.js';
 import * as add from './views/add.js';
 import * as historyView from './views/history.js';
 import * as insights from './views/insights.js';
 import * as plan from './views/plan.js';
+import * as goals from './views/goals.js';
+import * as bills from './views/bills.js';
 import * as settings from './views/settings.js';
 
 register('/', home);
@@ -17,6 +19,9 @@ register('/entry/:id', { name: 'edit', tab: null, isEditor: true, render: add.re
 register('/history', historyView);
 register('/insights', insights);
 register('/plan', plan);
+register('/goals', goals);
+register('/goal/:id', goals.detail);
+register('/bills', bills);
 register('/settings', settings);
 
 // Tab bar: render in the tap itself (see router.go), so + can focus the amount field on iOS.
@@ -45,7 +50,13 @@ document.addEventListener('visibilitychange', async () => {
 
 try {
   await init();
+  // Bills that have run out (no instalments left, or past their end date) archive themselves, with an Undo.
+  const swept = await sweepEndedBills();
   start();
+  if (swept.length) {
+    toast(swept.length === 1 ? `${swept[0].after.name} is finished and was archived.` : `${swept.length} finished bills were archived.`,
+      { action: 'Undo', ms: 9000, onAction: async () => { await restoreBills(swept); refresh(); toast('Restored'); } });
+  }
 } catch (err) {
   console.error(err);
   document.getElementById('view').replaceChildren(h('div', { class: 'page' },

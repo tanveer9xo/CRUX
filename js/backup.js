@@ -1,7 +1,8 @@
 // Backup file format, validation and the "time to back up" reminder. Pure: tests/backup.test.js.
 // An import is checked completely before anything is replaced; a bad file changes nothing.
 
-import { isPaise } from './money.js';
+import { isPaise, isSignedPaise } from './money.js';
+import { BILL_TYPES, RECURRENCES } from './bills.js';
 import { isYmd, isMonth } from './dates.js';
 import { APP_VERSION, SCHEMA_VERSION } from './version.js';
 
@@ -12,7 +13,7 @@ const MAX_TEXT = 200;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
-export function buildBackup({ categories, budgets, entries }, now = new Date()) {
+export function buildBackup({ categories, budgets, entries, goals = [], goalAdds = [], bills = [] }, now = new Date()) {
   return {
     app: BACKUP_APP,
     schema: SCHEMA_VERSION,
@@ -21,6 +22,9 @@ export function buildBackup({ categories, budgets, entries }, now = new Date()) 
     categories,
     budgets,
     entries,
+    goals,
+    goalAdds,
+    bills,
   };
 }
 
@@ -86,12 +90,110 @@ export function parseBackup(text) {
     });
   }
 
+  // Goals and bills arrived with schema 2. A 1.0.x backup has none: it imports cleanly, and the caller keeps
+  // whatever goals and bills are on the device (hasGoalData: false).
+  const hasGoalData = raw.schema >= 2;
+  let goals = [];
+  let goalAdds = [];
+  let bills = [];
+  if (hasGoalData) {
+    const g = parseGoalData(raw, catIds);
+    if (!g.ok) return g;
+    ({ goals, goalAdds, bills } = g);
+  }
+
   return {
     ok: true,
-    data: { categories, budgets, entries },
+    data: { categories, budgets, entries, goals, goalAdds, bills },
+    hasGoalData,
     exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : null,
-    counts: { categories: categories.length, entries: entries.length, months: Object.keys(budgets).length },
+    counts: { categories: categories.length, entries: entries.length, months: Object.keys(budgets).length, goals: goals.length, goalAdds: goalAdds.length, bills: bills.length },
   };
+}
+
+const bad = (error) => ({ ok: false, error });
+const orNull = (v) => (v === undefined ? null : v);
+const BILL_TYPE_IDS = BILL_TYPES.map((t) => t.id);
+const RECURRENCE_IDS = RECURRENCES.map((r) => r.id);
+
+function parseGoalData(raw, catIds) {
+  if (!Array.isArray(raw.goals) || !Array.isArray(raw.goalAdds) || !Array.isArray(raw.bills)) return bad('The backup is missing goals or bills.');
+
+  const goals = [];
+  const goalIds = new Set();
+  const bucketIds = new Map(); // goalId → Set of bucket ids
+  for (const [i, g] of raw.goals.entries()) {
+    if (!g || !ID.test(g.id) || goalIds.has(g.id) || !str(g.name).trim()) return bad(`Goal ${i + 1} is damaged.`);
+    const target = orNull(g.target) ?? 0;
+    const plan = orNull(g.monthlyPlan) ?? 0;
+    const date = orNull(g.targetDate);
+    if (!isPaise(target) || !isPaise(plan) || (date !== null && !isYmd(date)) || !Array.isArray(g.buckets ?? [])) return bad(`Goal ${i + 1} is damaged.`);
+    const ids = new Set();
+    const buckets = [];
+    for (const b of g.buckets ?? []) {
+      if (!b || !ID.test(b.id) || ids.has(b.id) || !str(b.name).trim()) return bad(`A bucket in goal ${i + 1} is damaged.`);
+      ids.add(b.id);
+      buckets.push({ id: b.id, name: str(b.name, 40).trim() });
+    }
+    goalIds.add(g.id);
+    bucketIds.set(g.id, ids);
+    goals.push({
+      id: g.id,
+      name: str(g.name, 40).trim(),
+      emoji: str(g.emoji, 16),
+      target,
+      targetDate: date,
+      monthlyPlan: plan,
+      buckets,
+      archived: g.archived === true,
+      order: Number.isFinite(g.order) ? g.order : i,
+      createdAt: Number.isFinite(g.createdAt) ? g.createdAt : 0,
+    });
+  }
+
+  const goalAdds = [];
+  const addIds = new Set();
+  for (const [i, a] of raw.goalAdds.entries()) {
+    const bucketId = orNull(a?.bucketId);
+    if (!a || !ID.test(a.id) || addIds.has(a.id) || !goalIds.has(a.goalId) || !isSignedPaise(a.amount) || a.amount === 0 || !isYmd(a.date)
+      || (bucketId !== null && !bucketIds.get(a.goalId).has(bucketId))) return bad(`Goal entry ${i + 1} is damaged.`);
+    addIds.add(a.id);
+    goalAdds.push({ id: a.id, goalId: a.goalId, amount: a.amount, date: a.date, note: str(a.note), bucketId, createdAt: Number.isFinite(a.createdAt) ? a.createdAt : 0 });
+  }
+
+  const bills = [];
+  const billIds = new Set();
+  for (const [i, b] of raw.bills.entries()) {
+    const amount = orNull(b?.amount);
+    const endDate = orNull(b?.endDate);
+    const left = orNull(b?.installmentsLeft);
+    const categoryId = orNull(b?.categoryId);
+    const dueOk = b && isYmd(b.dueDate);
+    if (!b || !ID.test(b.id) || billIds.has(b.id) || !str(b.name).trim() || !BILL_TYPE_IDS.includes(b.type) || !RECURRENCE_IDS.includes(b.recurrence) || !dueOk
+      || (amount !== null && !isPaise(amount)) || (endDate !== null && !isYmd(endDate)) || (left !== null && !(Number.isInteger(left) && left >= 0 && left <= 1200))
+      || (categoryId !== null && !catIds.has(categoryId)) || !(Number.isInteger(b.warnDays) && b.warnDays >= 0 && b.warnDays <= 90)) return bad(`Bill ${i + 1} is damaged.`);
+    const anchor = Number.isInteger(b.anchorDay) && b.anchorDay >= 1 && b.anchorDay <= 31 ? b.anchorDay : Number(b.dueDate.slice(8));
+    billIds.add(b.id);
+    bills.push({
+      id: b.id,
+      name: str(b.name, 60).trim(),
+      type: b.type,
+      amount,
+      recurrence: b.recurrence,
+      dueDate: b.dueDate,
+      anchorDay: anchor,
+      warnDays: b.warnDays,
+      endDate,
+      installmentsLeft: left,
+      note: str(b.note),
+      categoryId,
+      logExpense: b.logExpense !== false,
+      archived: b.archived === true,
+      archivedReason: typeof b.archivedReason === 'string' ? b.archivedReason.slice(0, 20) : null,
+      createdAt: Number.isFinite(b.createdAt) ? b.createdAt : 0,
+    });
+  }
+  return { ok: true, goals, goalAdds, bills };
 }
 
 /** Show the backup reminder when there's data and the last export is missing or over 14 days old. */

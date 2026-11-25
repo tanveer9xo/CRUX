@@ -107,3 +107,38 @@ export function rangeLabel(from, to) {
   const mon = MONTHS[b.m - 1].slice(0, 3);
   return a.d === b.d ? `${b.d} ${mon}` : `${a.d}–${b.d} ${mon}`;
 }
+
+/** Whole calendar days from a to b (positive when b is later). */
+export function daysBetween(a, b) {
+  const pa = parseYmd(a);
+  const pb = parseYmd(b);
+  return Math.round((Date.UTC(pb.y, pb.m - 1, pb.d) - Date.UTC(pa.y, pa.m - 1, pa.d)) / 86_400_000);
+}
+
+/** Day `anchorDay` of a month, or that month's last day when it is shorter (31 → 30, 28 or 29). */
+export function clampedDay(month, anchorDay) {
+  const [y, m] = month.split('-').map(Number);
+  return toYmd(y, m, Math.min(anchorDay, daysInMonth(y, m)));
+}
+
+/**
+ * Move a date n months on, keeping the original day of month where the new month has it and using the last day
+ * where it doesn't. `anchorDay` is the day the item is really due (31), which may differ from `ymd` (28 Feb),
+ * so 31 Jan → 28 Feb → 31 Mar rather than drifting to the 28th.
+ */
+export function addMonthsClamped(ymd, n, anchorDay = parseYmd(ymd).d) {
+  return clampedDay(addMonths(monthOf(ymd), n), anchorDay);
+}
+
+/** "5 Dec 2026" */
+export function longDate(ymd) {
+  const { y, m, d } = parseYmd(ymd);
+  return `${d} ${MONTHS[m - 1].slice(0, 3)} ${y}`;
+}
+
+/** Calendar months from `from` to `to` counting both ends (same month → 1). */
+export function monthsInclusive(from, to) {
+  const [fy, fm] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  return (ty * 12 + tm) - (fy * 12 + fm) + 1;
+}

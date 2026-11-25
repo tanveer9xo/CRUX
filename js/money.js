@@ -23,6 +23,9 @@ export function parseAmount(input) {
   return paise;
 }
 
+/** A signed amount in paise (goal adds are negative for withdrawals). */
+export const isSignedPaise = (v) => Number.isSafeInteger(v) && Math.abs(v) <= MAX_PAISE;
+
 export const isPaise = (v) => Number.isSafeInteger(v) && v >= 0 && v <= MAX_PAISE;
 
 /** Indian digit grouping of a non-negative integer string: 125000 → "1,25,000", 12345678 → "1,23,45,678". */

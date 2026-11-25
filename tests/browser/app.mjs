@@ -79,6 +79,14 @@ const tap = async (sel) => {
   for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
   await sleep(250);
 };
+const setVal = (sel, v) => ev(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) throw new Error('no ' + ${JSON.stringify(sel)}); el.value = ${JSON.stringify(v)}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+// Go to a screen; if it's already showing, redraw it (data may have been changed behind its back).
+// JSON with object keys sorted, so two records with the same fields compare equal whatever order they were built in.
+const norm = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
+const nav = async (hash) => { await ev(`location.hash === ${JSON.stringify(hash)} ? import('./js/router.js').then((r) => { r.refresh(); return true; }) : (location.hash = ${JSON.stringify(hash)}, true)`); await sleep(450); };
+const dayOffset = (n) => ev(`import('./js/dates.js').then((d) => d.addDays(d.todayYmd(), ${n}))`);
+// Click a button by its exact text in the topmost open sheet (a confirm can sit on top of a form).
+const clickTop = async (label) => { await ev(`(() => { const sheets = document.querySelectorAll('.sheet'); const top = sheets[sheets.length - 1]; const b = [...top.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}); if (!b) throw new Error('no button ' + ${JSON.stringify(label)}); b.click(); return true; })()`); await sleep(350); };
 const typeText = async (t) => { await send('Input.insertText', { text: t }); await sleep(100); };
 const shot = async (name) => {
   // Every screen we photograph must fit the phone's width (no sideways scrolling).
@@ -86,6 +94,9 @@ const shot = async (name) => {
   const wide = await ev(`[innerWidth !== 390 ? 'layout viewport is ' + innerWidth + 'px wide' : null, scrollX ? 'scrolled sideways by ' + scrollX : null,
     ...[...document.querySelectorAll('body *')].filter((el) => { const r = el.getBoundingClientRect(); return r.width > 2 && r.right > 391 && !el.closest('.chips-scroll, .sr-only'); }).map((el) => String(el.className?.baseVal ?? el.className) || el.tagName)].filter(Boolean).slice(0, 4)`);
   check(wide.length === 0, `${name}: fits the screen width${wide.length ? ` (too wide: ${wide.join(', ')})` : ''}`);
+  // Nothing may spill out of the card or row that holds it.
+  const spill = await ev(`[...document.querySelectorAll('main .card, main .bill-row, main .strip-row, main .cat-row')].flatMap((c) => { const cr = c.getBoundingClientRect(); return [...c.querySelectorAll('*')].filter((el) => { if (el.closest('.sr-only')) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.right > cr.right + 0.5; }).map((el) => String(el.className?.baseVal ?? el.className) || el.tagName); }).slice(0, 4)`);
+  check(spill.length === 0, `${name}: nothing spills out of its card${spill.length ? ` (${spill.join(', ')})` : ''}`);
   if (!SHOTS) return;
   await sleep(350);
   const s = await send('Page.captureScreenshot', { format: 'png' });
@@ -236,7 +247,7 @@ await sleep(1500);
 await shot('03-home');
 
 // ---- plan: budget change applies from this month onward ----
-await click('.tabbar [data-tab=plan]');
+await nav('#/plan');
 const first = await ev(`document.querySelector('.budget-input').getAttribute('aria-label')`);
 await ev(`(() => { const i = document.querySelector('.budget-input'); i.value = '9,500'; i.dispatchEvent(new Event('change')); return true; })()`);
 await sleep(300);
@@ -251,7 +262,7 @@ await click('.sheet-head .icon-btn');
 await sleep(250);
 
 // ---- insights ----
-await click('.tabbar [data-tab=insights]');
+await nav('#/insights');
 check(!!(await ev(`document.querySelector('.cmp-total .hero-amt')?.textContent`)), 'Insights: month to date renders');
 await shot('06-insights-mtd');
 await clickText('.seg', 'Months');
@@ -275,6 +286,236 @@ check((await text('.month-nav-label')) !== null, `History: month picker moves to
 await click('.tabbar [data-tab=history]');
 await shot('09-history');
 
+// ---- navigation: Goals and Bills are one tap away; the + button is still the centre slot ----
+await nav('#/');
+const tabs = await ev(`[...document.querySelectorAll('.tabbar a')].map((a) => { const r = a.getBoundingClientRect(); return { tab: a.dataset.tab, h: r.height, w: r.width, cx: r.left + r.width / 2 }; })`);
+check(JSON.stringify(tabs.map((x) => x.tab)) === JSON.stringify(['home', 'history', 'add', 'goals', 'bills']), 'tab bar: Home, History, +, Goals, Bills (five slots, not crowded)');
+check(tabs.every((x) => x.h >= 48 && x.w >= 60), `tab bar: every slot is at least 60×48 (narrowest ${Math.round(Math.min(...tabs.map((x) => x.w)))}px)`);
+check(Math.abs(tabs[2].cx - 195) <= 1, '+ stays centred in the tab bar');
+await click('.tabbar [data-tab=goals]');
+check((await text('main h1')) === 'Goals', 'Goals: one tap from the tab bar');
+await click('.tabbar [data-tab=bills]');
+check((await text('main h1')) === 'Bills', 'Bills: one tap from the tab bar');
+await click('#menu-btn');
+check((await ev(`[...document.querySelectorAll('.menu-item strong')].map((e) => e.textContent).join(',')`)) === 'Insights,Plan,Settings', 'menu in the header holds Insights, Plan and Settings');
+await shot('15-menu');
+await clickText('.menu-item', 'Insights');
+check((await text('main h1')) === 'Insights', 'Insights: reached from the menu');
+
+// ---- goals ----
+await nav('#/');
+const spentBefore = await text('.hero-amt');
+await nav('#/insights');
+const mtdBefore = await text('.cmp-total .hero-amt');
+const seedGoals = (await idb('goals')).sort((a, b) => a.order - b.order);
+check(JSON.stringify(seedGoals.map((g) => g.name)) === JSON.stringify(['Emergency fund', 'Wedding fund', 'Long-term investments']) && seedGoals.every((g) => g.target === 0 && g.targetDate === null && g.monthlyPlan === 0), 'seeded goals: Emergency fund, Wedding fund, Long-term investments, all with ₹0 targets');
+check((await idb('goalAdds')).length === 0 && (await idb('bills')).length === 0, 'no goal adds and no bills are seeded');
+await click('.tabbar [data-tab=goals]');
+check((await ev(`[...document.querySelectorAll('.goal-card .goal-title')].map((e) => e.textContent.trim()).join('|')`)).includes('Emergency fund') && (await ev(`document.querySelectorAll('.goal-card').length`)) === 3, 'Goals lists the three seeded goals');
+check((await text('.goal-card')).includes('No target set'), 'a goal without a target shows only what is saved');
+// Edit Emergency fund: target, date, plan, two buckets.
+const future = await dayOffset(400);
+await click('.goal-card .icon-btn');
+await setVal('#goal-target', '10,000');
+await setVal('#goal-date', future);
+await setVal('#goal-plan', '1,000');
+await click('#add-bucket');
+await click('#add-bucket');
+await ev(`(() => { const i = document.querySelectorAll('.bucket-edit .bucket-row input'); i[0].value = 'Savings account'; i[0].dispatchEvent(new Event('input')); i[1].value = 'FD'; i[1].dispatchEvent(new Event('input')); return true; })()`);
+await shot('16-goal-edit');
+await click('#goal-save');
+await sleep(300);
+let eg = (await idb('goals')).find((g) => g.name === 'Emergency fund');
+check(eg.target === 1000000 && eg.targetDate === future && eg.monthlyPlan === 100000 && eg.buckets.map((b) => b.name).join() === 'Savings account,FD', 'editing a goal saves target, date, monthly plan and buckets (as paise)');
+// Add money into the FD bucket.
+await click('.goal-card .btn-primary');
+await setVal('#gm-amount', '2,500');
+await clickText('.sheet .chip', 'FD');
+await click('#gm-save');
+await sleep(300);
+let adds = await idb('goalAdds');
+const fdId = eg.buckets[1].id;
+check(adds.length === 1 && adds[0].amount === 250000 && adds[0].bucketId === fdId && Number.isInteger(adds[0].amount), 'Add money saves ₹2,500 into the FD bucket as 250000 paise');
+let card = await text('.goal-card');
+check(card.includes('₹2,500') && card.includes('25%') && card.includes('₹7,500') && card.includes('to go'), 'goal card: saved ₹2,500, 25 % of target, ₹7,500 to go');
+check(/Needs ₹\d[\d,.]* a month to reach it by/.test(card), `goal card: monthly amount needed (${(card.match(/Needs [^(]*/) ?? [''])[0].trim()})`);
+check(card.includes('This month: +₹2,500 of ₹1,000 planned'), 'goal card: this month’s adds against the planned monthly amount');
+check(card.includes('Where it sits') && card.includes('FD') && card.includes('100%'), 'goal card: split by bucket');
+await shot('17-goals');
+// Withdrawals: too much is refused; a valid one lowers the total.
+await clickText('.goal-card .btn', 'Withdraw');
+await setVal('#gm-amount', '3,000');
+await clickText('.sheet .chip', 'FD');
+await click('#gm-save');
+check((await text('.sheet .form-error')).includes('only ₹2,500 in this bucket'), 'withdrawing more than the bucket holds is refused');
+await setVal('#gm-amount', '500');
+await click('#gm-save');
+await sleep(300);
+adds = await idb('goalAdds');
+check(adds.length === 2 && adds.some((a) => a.amount === -50000 && a.bucketId === fdId), 'a withdrawal is stored as a negative add (−50000 paise)');
+card = await text('.goal-card');
+check(card.includes('₹2,000') && card.includes('20%') && card.includes('This month: +₹2,000'), 'after the withdrawal: saved ₹2,000 (20 %), this month +₹2,000');
+// A no-target goal (Long-term investments) takes adds too.
+await ev(`(() => { const cards = [...document.querySelectorAll('.goal-card')]; [...cards[2].querySelectorAll('.btn-primary')][0].click(); return true; })()`);
+await sleep(300);
+await setVal('#gm-amount', '1,000');
+await click('#gm-save');
+await sleep(300);
+const lti = await ev(`[...document.querySelectorAll('.goal-card')][2].textContent`);
+check(lti.includes('₹1,000') && lti.includes('No target set') && !lti.includes('%'), 'Long-term investments: saved ₹1,000, no target, no percentage');
+// Goal money is not spending.
+await nav('#/');
+check((await text('.hero-amt')) === spentBefore, `Home spending is unchanged by goal adds (${spentBefore})`);
+await nav('#/insights');
+check((await text('.cmp-total .hero-amt')) === mtdBefore, `Insights month-to-date is unchanged by goal adds (${mtdBefore})`);
+check((await text('#insights-saved')).includes('Saved this month: ₹3,000'), 'Insights: “Saved this month: ₹3,000” (net of the withdrawal, across goals)');
+await shot('18-insights-saved');
+await nav('#/history');
+check(!(await text('main')).includes('Emergency fund'), 'History shows expenses only, no goal adds');
+await nav('#/');
+check((await ev(`document.querySelectorAll('#goal-strip .strip-row').length`)) === 3 && (await text('#goal-strip')).includes('₹2,000'), 'Home: compact goals strip with the three goals');
+// Detail page: entries, edit, delete with undo.
+await ev(`document.getElementById('goal-strip').scrollIntoView({ block: 'center' }); true`);
+await shot('23b-home-goals');
+await ev(`document.querySelector('#goal-strip .strip-row').click(); true`);
+await sleep(400);
+check((await text('main h1')).includes('Emergency fund') && (await ev(`document.querySelectorAll('.goal-detail .entry').length`)) === 2, 'goal detail lists its two entries');
+await shot('19-goal-detail');
+await click('.goal-detail .entry');
+await click('.sheet .btn-ghost-danger');
+await sleep(300);
+check((await idb('goalAdds')).length === 2 && (await text('.toast-btn')) === 'Undo', 'deleting a goal entry offers Undo');
+await click('.toast-btn');
+await sleep(300);
+check((await idb('goalAdds')).length === 3, 'Undo brings the goal entry back');
+// New goal, archive, restore.
+await nav('#/goals');
+await click('#new-goal');
+await setVal('#goal-name', 'Trip');
+await click('#goal-save');
+await sleep(300);
+check((await idb('goals')).some((g) => g.name === 'Trip' && g.target === 0), 'a new goal can be added');
+await ev(`[...document.querySelectorAll('.goal-card')].find((c) => c.textContent.includes('Trip')).querySelector('.icon-btn').click(); true`);
+await sleep(300);
+await click('#goal-archive');
+await clickTop('Archive');
+await sleep(300);
+check((await idb('goals')).find((g) => g.name === 'Trip').archived === true && (await text('.archived summary')).includes('Archived (1)'), 'a goal can be archived');
+await ev(`document.querySelector('.archived').open = true; true`);
+await clickText('.archived .btn', 'Restore');
+await sleep(300);
+check((await idb('goals')).find((g) => g.name === 'Trip').archived === false, 'and restored');
+
+// ---- bills ----
+await nav('#/bills');
+check((await text('.empty-title')) === 'No bills or renewals yet', 'Bills starts empty (no seeded items)');
+await nav('#/');
+check(!(await ev(`!!document.querySelector('#upcoming')`)), 'Home shows no Upcoming card when nothing is due');
+const catIds = Object.fromEntries((await idb('categories')).map((c) => [c.name, c.id]));
+const yesterday = await dayOffset(-1);
+const soonDay = await dayOffset(2);
+await nav('#/bills');
+await click('#new-bill');
+await setVal('#bill-name', 'Bike EMI');
+await clickText('.sheet .chip', 'EMI');
+check(await ev(`document.getElementById('bill-log').checked`), 'bill form: “log an expense when paid” defaults ON for an EMI');
+await setVal('#bill-amount', '3,500');
+await setVal('#bill-due', yesterday);
+await setVal('#bill-left', '2');
+await setVal('#bill-cat', catIds.Petrol);
+await shot('20-bill-form');
+await click('#bill-save');
+await sleep(300);
+let emi = (await idb('bills')).find((b) => b.name === 'Bike EMI');
+check(emi && emi.type === 'emi' && emi.amount === 350000 && emi.installmentsLeft === 2 && emi.logExpense === true && emi.categoryId === catIds.Petrol && emi.dueDate === yesterday && emi.anchorDay === Number(yesterday.slice(8)), 'an EMI saves with amount, instalments left, linked category and due-day anchor');
+// Credit card default: OFF, and it follows the type until the toggle is touched by hand.
+await click('#new-bill');
+await setVal('#bill-name', 'Card');
+await clickText('.sheet .chip', 'Credit card due');
+check(!(await ev(`document.getElementById('bill-log').checked`)) && (await text('.sheet')).includes('count the money twice'), 'bill form: “log an expense” defaults OFF for a credit card due, with the reason');
+await clickText('.sheet .chip', 'Subscription');
+check(await ev(`document.getElementById('bill-log').checked`), 'switching to Subscription turns it back ON (default follows the type)');
+await clickText('.sheet .chip', 'Credit card due');
+await ev(`document.getElementById('bill-log').click(); true`);
+await clickText('.sheet .chip', 'Insurance');
+check(await ev(`document.getElementById('bill-log').checked`), 'a hand-set toggle is not overwritten by a type change');
+await ev(`document.getElementById('bill-log').click(); true`);
+await clickText('.sheet .chip', 'Credit card due');
+await setVal('#bill-due', soonDay);
+await setVal('#bill-warn', '5');
+await click('#bill-save');
+await sleep(300);
+const card2 = (await idb('bills')).find((b) => b.name === 'Card');
+check(card2.type === 'cc' && card2.logExpense === false && card2.amount === null && card2.warnDays === 5, 'a credit card due saves with logging OFF and no amount');
+// A far-off one, through the store.
+await ev(`(async () => { const s = await import('./js/store.js'); const d = await import('./js/dates.js'); await s.saveBill({ name: 'Insurance', type: 'insurance', amount: 1200000, recurrence: 'yearly', dueDate: d.addDays(d.todayYmd(), 60), anchorDay: +d.addDays(d.todayYmd(), 60).slice(8), warnDays: 14, endDate: null, installmentsLeft: null, note: '', categoryId: null, logExpense: true, archived: false, archivedReason: null }); return true; })()`);
+await nav('#/bills');
+check((await ev(`[...document.querySelectorAll('.bill-group')].map((g) => g.getAttribute('aria-label') + ':' + g.querySelectorAll('.bill-row').length).join(',')`)) === 'Overdue:1,Due soon:1,Later:1', 'Bills groups: Overdue 1, Due soon 1, Later 1');
+check((await text('.g-overdue')).includes('1 day overdue') && (await text('.g-overdue')).includes('2 left'), 'overdue row says “1 day overdue” and “2 left”');
+await shot('21-bills');
+await click('.g-overdue .bill-main');
+await shot('22-bill-sheet');
+await click('.sheet-head .icon-btn');
+await sleep(250);
+await nav('#/');
+check((await text('#upcoming')).includes('Upcoming · 1 overdue') && (await ev(`document.querySelectorAll('#upcoming .bill-row').length`)) === 2, 'Home: Upcoming card shows the overdue EMI and the card due soon');
+await shot('23-home-upcoming');
+// Mark paid (EMI logs an expense): Add opens prefilled.
+const entriesN = (await idb('entries')).length;
+await click('#upcoming .btn-paid');
+check(await ev(`location.hash === '#/add'`) && (await text('main h1')) === 'Add expense', 'Mark paid opens Add');
+check((await ev(`document.getElementById('amount').value`)) === '3500' && (await ev(`document.querySelector('.chip[aria-checked=true]')?.textContent`)).includes('Petrol') && (await ev(`document.getElementById('note').value`)) === 'Bike EMI', 'Add is prefilled: ₹3,500, category Petrol, note “Bike EMI”');
+check((await text('#paying')).includes('Bike EMI marked paid') && (await text('#paying')).includes('Next due'), 'Add says it was marked paid and when it is next due');
+emi = (await idb('bills')).find((b) => b.name === 'Bike EMI');
+check(emi.installmentsLeft === 1 && emi.dueDate > yesterday && !emi.archived, 'the EMI moved to next month with 1 instalment left');
+await shot('24-add-prefilled');
+await tap('.add-form button[type=submit]');
+await sleep(300);
+const logged = (await idb('entries')).find((e) => e.note === 'Bike EMI');
+check((await idb('entries')).length === entriesN + 1 && logged.amount === 350000 && logged.categoryId === catIds.Petrol, 'Save logs the expense (₹3,500, Petrol): 2 taps from Home');
+// Pay the last instalment, skipping the expense (cancel): the EMI archives itself.
+await nav('#/bills');
+await click('button[aria-label="Mark Bike EMI paid"]');
+await click('.page-head .icon-btn'); // close Add: skip logging
+await sleep(300);
+emi = (await idb('bills')).find((b) => b.name === 'Bike EMI');
+check(emi.archived && emi.archivedReason === 'installments' && emi.installmentsLeft === 0 && (await idb('entries')).length === entriesN + 1, 'last instalment paid: archived as “no instalments left”, and closing Add logged nothing');
+// Credit card: mark paid logs nothing, offers Undo.
+await nav('#/bills');
+const cardDue = card2.dueDate;
+await click('button[aria-label="Mark Card paid"]');
+await sleep(300);
+let card3 = (await idb('bills')).find((b) => b.name === 'Card');
+check(await ev(`location.hash === '#/bills'`) && card3.dueDate > cardDue && (await idb('entries')).length === entriesN + 1, 'credit card mark paid: no expense offered, date moves on');
+check((await text('.toast')).includes('Paid. Next due') && (await text('.toast-btn')) === 'Undo', 'a toast says what happened, with Undo');
+await click('.toast-btn');
+await sleep(300);
+check((await idb('bills')).find((b) => b.name === 'Card').dueDate === cardDue, 'Undo puts the due date back');
+// Skip this one.
+await click('.g-soon .bill-main');
+await click('#bill-skip');
+await sleep(300);
+card3 = (await idb('bills')).find((b) => b.name === 'Card');
+check(card3.dueDate > cardDue && (await idb('entries')).length === entriesN + 1 && (await text('.toast')).startsWith('Skipped'), 'Skip this one: date moves on, no expense');
+// Undo a mark-paid from the Add screen.
+await ev(`(async () => { const s = await import('./js/store.js'); await s.saveBill({ name: 'One-off', type: 'bill', amount: 50000, recurrence: 'once', dueDate: (await import('./js/dates.js')).todayYmd(), anchorDay: 1, warnDays: 3, endDate: null, installmentsLeft: null, note: '', categoryId: null, logExpense: true, archived: false, archivedReason: null }); return true; })()`);
+await nav('#/bills');
+await click('button[aria-label="Mark One-off paid"]');
+check((await text('#paying')).includes('finished and archived'), 'a one-time bill says it is finished once paid');
+await click('#undo-paid');
+await sleep(300);
+check(!(await idb('bills')).find((b) => b.name === 'One-off').archived, 'Undo mark paid (from Add) restores the bill');
+// Finished bills archive themselves on start-up, with Undo.
+await ev(`(async () => { const s = await import('./js/store.js'); const b = s.state.bills.find((x) => x.name === 'One-off'); await s.saveBill({ ...b, recurrence: 'monthly', type: 'emi', installmentsLeft: 0 }); return true; })()`);
+await send('Page.reload');
+await sleep(1500);
+check((await idb('bills')).find((b) => b.name === 'One-off').archivedReason === 'installments' && (await text('.toast')).includes('finished') && (await text('.toast-btn')) === 'Undo', 'a bill with 0 instalments left is archived automatically on start-up, with Undo');
+await click('.toast-btn');
+await sleep(300);
+check(!(await idb('bills')).find((b) => b.name === 'One-off').archived, 'Undo restores it');
+await ev(`(async () => { const s = await import('./js/store.js'); const b = s.state.bills.find((x) => x.name === 'One-off'); await s.saveBill({ ...b, installmentsLeft: 5 }); return true; })()`);
+await nav('#/');
+
 // ---- export & import ----
 await click('.tabbar [data-tab=home]');
 await click('.banner .btn-primary');
@@ -287,18 +528,24 @@ if (!files.length) finish(1);
 const backup = JSON.parse(readFileSync(join(DL, files[0]), 'utf8'));
 const count = (await idb('entries')).length;
 check(backup.app === 'crux' && backup.entries.length === count && backup.entries.every((e) => Number.isInteger(e.amount)), `the backup holds all ${count} entries as integer paise`);
+const gN = (await idb('goals')).length;
+const aN = (await idb('goalAdds')).length;
+const bN = (await idb('bills')).length;
+check(backup.schema === 2 && backup.goals.length === gN && backup.goalAdds.length === aN && backup.bills.length === bN && gN >= 3 && aN >= 3 && bN >= 3, `the backup also holds ${gN} goals, ${aN} goal entries and ${bN} bills (schema 2)`);
+check(backup.goalAdds.some((a) => a.amount < 0) && backup.goalAdds.every((a) => Number.isInteger(a.amount)) && backup.bills.every((b) => b.amount === null || Number.isInteger(b.amount)), 'goal withdrawals are negative integers; bill amounts are integer paise or null');
 await click('.tabbar [data-tab=home]');
 check(!(await ev(`!!document.querySelector('.banner')`)), 'backup reminder is gone after exporting');
 
 // Import a smaller backup: the app must ask first, and Cancel must change nothing.
 const small = { ...backup, entries: backup.entries.slice(0, 3) };
 writeFileSync(join(WORK, 'small.json'), JSON.stringify(small));
-await click('.page-head .icon-btn'); // settings
+await nav('#/settings');
 const { root } = await send('DOM.getDocument');
 const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: '#import-file' });
 await send('DOM.setFileInputFiles', { nodeId, files: [join(WORK, 'small.json')] });
 await sleep(600);
 check((await text('.sheet h2')) === 'Replace all your data?', 'Import asks before replacing anything');
+check((await text('.sheet')).includes(`${gN} goals with ${aN} entries, and ${bN} bills`), 'Import preview shows counts for goals, their entries and bills');
 await shot('11-import-confirm');
 await clickText('.sheet .btn', 'Cancel');
 check((await idb('entries')).length === count, 'Cancel leaves the data as it was');
@@ -307,9 +554,10 @@ await sleep(600);
 await clickText('.sheet .btn', 'Replace');
 await sleep(500);
 check((await idb('entries')).length === 3, 'Replace imports the backup (3 entries)');
+check(norm((await idb('goals')).sort((a, b) => a.order - b.order)) === norm([...backup.goals].sort((a, b) => a.order - b.order)) && (await idb('goalAdds')).length === aN && (await idb('bills')).length === bN, 'goals, goal entries and bills come back from the backup too');
 // A damaged file is refused.
 writeFileSync(join(WORK, 'bad.json'), JSON.stringify({ ...backup, entries: [{ ...backup.entries[0], amount: 12.5 }] }));
-await click('.page-head .icon-btn');
+await nav('#/settings');
 const n2 = (await send('DOM.querySelector', { nodeId: (await send('DOM.getDocument')).root.nodeId, selector: '#import-file' })).nodeId;
 await send('DOM.setFileInputFiles', { nodeId: n2, files: [join(WORK, 'bad.json')] });
 await sleep(600);
@@ -330,6 +578,25 @@ await tap('.add-form button[type=submit]');
 check((await idb('entries')).length === 4, 'offline: adding an expense works');
 await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 
+// ---- a backup exported from 1.0.2 (no goals or bills in it) still imports, and keeps what's here ----
+const goalsHere = JSON.stringify((await idb('goals')).sort((a, b) => a.id.localeCompare(b.id)));
+const addsHere = JSON.stringify((await idb('goalAdds')).sort((a, b) => a.id.localeCompare(b.id)));
+const billsHere = (await idb('bills')).sort((a, b) => a.id.localeCompare(b.id));
+await nav('#/settings');
+const fx = (await send('DOM.querySelector', { nodeId: (await send('DOM.getDocument')).root.nodeId, selector: '#import-file' })).nodeId;
+await send('DOM.setFileInputFiles', { nodeId: fx, files: [join(process.cwd(), 'tests/fixtures/backup-1.0.2.json')] });
+await sleep(600);
+check((await text('.sheet h2')) === 'Replace all your data?' && (await text('.sheet')).includes('3 expenses in 3 categories') && (await text('.sheet')).includes('older version') && (await text('.sheet')).includes('are kept as they are'), 'a 1.0.2 backup imports: the preview says goals and bills are kept');
+await shot('25-import-old-backup');
+await clickTop('Replace');
+await sleep(500);
+const fxCats = (await idb('categories')).sort((a, b) => a.order - b.order);
+check(fxCats.map((c) => c.name).join() === 'Rent,Groceries,Old category' && (await idb('entries')).length === 3 && (await idb('entries')).some((e) => e.amount === 125050), 'the 1.0.2 backup’s categories, budgets and expenses are in');
+check(JSON.stringify((await idb('goals')).sort((a, b) => a.id.localeCompare(b.id))) === goalsHere && JSON.stringify((await idb('goalAdds')).sort((a, b) => a.id.localeCompare(b.id))) === addsHere, 'goals and goal entries are exactly as they were');
+const billsNow = (await idb('bills')).sort((a, b) => a.id.localeCompare(b.id));
+check(billsNow.length === billsHere.length && billsNow.every((b, i) => JSON.stringify({ ...b, categoryId: 0 }) === JSON.stringify({ ...billsHere[i], categoryId: 0 }) && (b.categoryId === null || fxCats.some((c) => c.id === b.categoryId))), 'bills are kept; a link to a category that no longer exists is cleared');
+check(await ev(`Promise.all([import('./js/backup.js'), import('./js/store.js')]).then(([b, s]) => b.parseBackup(JSON.stringify(s.exportData())).ok)`), 'the next export still validates (no dangling links)');
+
 // ---- reset to starter categories: CRUX's data only; VANE's data on the same origin survives ----
 const vaneSnapshot = () => ev(`(async () => {
   const dbs = {};
@@ -342,6 +609,7 @@ const vaneBefore = await vaneSnapshot();
 check(vaneBefore.appearance === 'dark' && vaneBefore.cachedText === 'vane cached file' && vaneBefore.dbs['workout-tracker'][0] === 'vane workout workout-tracker', 'VANE fixture is in place before the reset');
 check(await ev(`localStorage.getItem('cruxLeftover') === 'crux-owned key'`), 'a crux-prefixed localStorage key exists before the reset');
 const entriesBefore = (await idb('entries')).length;
+const [goalsBefore, addsBefore, billsBefore] = [(await idb('goals')).length, (await idb('goalAdds')).length, (await idb('bills')).length];
 await send('Page.navigate', { url: `${BASE}#/settings` });
 await sleep(1200);
 await shot('12-settings-reset');
@@ -349,6 +617,7 @@ await shot('12-settings-reset');
 await click('#reset-btn');
 check((await text('.sheet h2')) === 'Reset to starter categories?', 'Reset asks for confirmation first');
 check((await text('.sheet')).includes('Export a backup first') && (await text('.sheet')).includes(`${entriesBefore} expenses`), `the dialog suggests an Export and says how many expenses (${entriesBefore}) go`);
+check((await text('#reset-text')).includes(`${goalsBefore} goals (with ${addsBefore} entries) and ${billsBefore} bills`), `the dialog also counts the goals (${goalsBefore}), their entries (${addsBefore}) and bills (${billsBefore}) that go`);
 await shot('13-reset-confirm');
 await clickText('.sheet .btn', 'Cancel');
 check((await idb('entries')).length === entriesBefore, 'Cancel leaves everything as it was');
@@ -365,6 +634,8 @@ check((await idb('entries')).length === 0, 'after reset: no expenses');
 const plan2 = (await idb('budgets')).flatMap((b) => Object.values(b.plan));
 check(plan2.length === 18 && plan2.every((v) => v === 0), 'after reset: every budget is ₹0');
 check((await idb('budgets')).length === 1, 'after reset: a single month of budgets (no old history)');
+const goals2 = (await idb('goals')).sort((a, b) => a.order - b.order);
+check(goals2.map((g) => g.name).join() === 'Emergency fund,Wedding fund,Long-term investments' && goals2.every((g) => g.target === 0 && g.buckets.length === 0 && !g.archived) && (await idb('goalAdds')).length === 0 && (await idb('bills')).length === 0, 'after reset: goals and bills are cleared, the 3 starter goals are back at ₹0');
 check((await idb('meta')).every((m) => m.key !== 'lastExport') && cats2.every((c) => !cats.some((o) => o.id === c.id)), 'after reset: old ids and the last-export date are gone (a fresh start)');
 check(await ev(`localStorage.getItem('cruxLeftover') === null`), 'after reset: crux-prefixed localStorage keys are removed');
 check(await ev(`location.hash === '#/' && document.querySelector('.hero-amt').textContent === '₹0'`), 'after reset: back on Home showing ₹0');
@@ -373,6 +644,66 @@ check(JSON.stringify(vaneAfter) === JSON.stringify(vaneBefore), 'VANE’s localS
 check(await ev(`indexedDB.databases().then((d) => ['workout-tracker', 'vane-extra', 'crux'].every((n) => d.some((x) => x.name === n)))`), 'all three databases (VANE’s two and CRUX’s) still exist');
 check(await ev(`caches.keys().then((k) => k.some((n) => n.startsWith('crux-')))`), 'CRUX’s own app cache is untouched too, so it still works offline');
 await shot('14-after-reset');
+
+// ---- erase everything: also goals and bills, only CRUX's data, and nothing comes back on reload ----
+await nav('#/settings');
+await clickText('.danger-zone .btn', 'Erase all data');
+check((await text('.sheet')).includes('goals') && (await text('.sheet')).includes('bills will be deleted') && (await text('.sheet')).includes('Only CRUX’s own data'), 'Erase confirms with the counts of goals and bills too');
+await clickTop('Cancel');
+check((await idb('goals')).length === 3 && (await idb('categories')).length === 18, 'Cancel leaves everything');
+await clickText('.danger-zone .btn', 'Erase all data');
+await clickTop('Erase everything');
+await sleep(500);
+const stores = ['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills'];
+const counts = {};
+for (const st of stores) counts[st] = (await idb(st)).length;
+check(stores.every((st) => counts[st] === 0), `Erase empties all six stores (${JSON.stringify(counts)})`);
+check(JSON.stringify(await vaneSnapshot()) === JSON.stringify(vaneBefore), 'VANE’s data survives the erase untouched');
+await send('Page.reload');
+await sleep(1500);
+check((await idb('categories')).length === 0 && (await idb('goals')).length === 0, 'after a reload nothing is re-seeded');
+
+// ---- migration: a 1.0.2 install (database version 1) upgrades to version 2 without losing anything ----
+await send('Page.navigate', { url: `${ORIGIN}/VANE/` });
+await sleep(800);
+const month = await ev(`(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); })()`);
+await ev(`(async () => {
+  await new Promise((ok, no) => { const r = indexedDB.deleteDatabase('crux'); r.onsuccess = () => ok(); r.onerror = () => no(r.error); });
+  await new Promise((ok, no) => {
+    const r = indexedDB.open('crux', 1);
+    r.onupgradeneeded = () => { const db = r.result; db.createObjectStore('categories', { keyPath: 'id' }); db.createObjectStore('budgets', { keyPath: 'month' }); db.createObjectStore('entries', { keyPath: 'id' }).createIndex('date', 'date'); db.createObjectStore('meta', { keyPath: 'key' }); };
+    r.onsuccess = () => {
+      const db = r.result;
+      const tx = db.transaction(['categories', 'budgets', 'entries', 'meta'], 'readwrite');
+      tx.objectStore('categories').put({ id: 'old_c1', name: 'Old Rent', emoji: '🏠', color: '#3987E5', order: 0, archived: false, createdAt: 1 });
+      tx.objectStore('categories').put({ id: 'old_c2', name: 'Old Food', emoji: '🛒', color: '#199E70', order: 1, archived: false, createdAt: 2 });
+      tx.objectStore('budgets').put({ month: '${month}', plan: { old_c1: 1000000, old_c2: 300000 } });
+      tx.objectStore('entries').put({ id: 'old_e1', amount: 125050, categoryId: 'old_c2', date: '${month}-01', note: 'kept', createdAt: 3, updatedAt: 3 });
+      tx.objectStore('entries').put({ id: 'old_e2', amount: 99900, categoryId: 'old_c1', date: '${month}-02', note: '', createdAt: 4, updatedAt: 4 });
+      tx.objectStore('entries').put({ id: 'old_e3', amount: 5, categoryId: 'old_c2', date: '${month}-03', note: 'five paise', createdAt: 5, updatedAt: 5 });
+      tx.objectStore('meta').put({ key: 'seeded', value: 1700000000001 });
+      tx.objectStore('meta').put({ key: 'lastExport', value: 1700000000000 });
+      tx.oncomplete = () => { db.close(); ok(); };
+    };
+    r.onerror = () => no(r.error);
+  });
+  return true;
+})()`);
+await send('Page.navigate', { url: BASE });
+await sleep(2500);
+const dbInfo = await ev(`indexedDB.databases().then((d) => d.find((x) => x.name === 'crux'))`);
+check(dbInfo.version === 2, 'migration: the database upgraded from version 1 to 2');
+check(await ev(`new Promise((ok) => { const r = indexedDB.open('crux'); r.onsuccess = () => { ok(['goals', 'goalAdds', 'bills'].every((s) => r.result.objectStoreNames.contains(s))); r.result.close(); }; })`), 'migration: the goals, goalAdds and bills stores exist');
+const mc = (await idb('categories')).sort((a, b) => a.order - b.order);
+check(mc.map((c) => c.id).join() === 'old_c1,old_c2', 'migration: both old categories are there, and the 18 starters were not added on top');
+const me = (await idb('entries')).sort((a, b) => a.id.localeCompare(b.id));
+check(me.map((e) => e.amount).join() === '125050,99900,5' && me[0].note === 'kept', 'migration: every old expense is intact, to the paise');
+check((await idb('budgets'))[0].plan.old_c1 === 1000000 && (await idb('meta')).find((m) => m.key === 'lastExport').value === 1700000000000, 'migration: old budgets and the last-export date are intact');
+const mg = (await idb('goals')).sort((a, b) => a.order - b.order);
+check(mg.map((g) => g.name).join() === 'Emergency fund,Wedding fund,Long-term investments' && mg.every((g) => g.target === 0) && (await idb('bills')).length === 0, 'migration: the three starter goals appear at ₹0, with no bills');
+check((await text('.hero')).includes('₹2,249.55') && (await text('.hero')).includes('₹13,000'), 'migration: Home shows the old data (₹2,249.55 spent of ₹13,000)');
+check(await ev(`Promise.all([import('./js/backup.js'), import('./js/store.js')]).then(([b, s]) => { const f = b.parseBackup(JSON.stringify(s.exportData())); return f.ok && f.counts.goals === 3 && f.counts.entries === 3; })`), 'migration: export works straight after the upgrade');
+check(JSON.stringify(await vaneSnapshot()) === JSON.stringify(vaneBefore), 'VANE’s data is still untouched at the end');
 
 check(failed.length === 0, `no failed requests${failed.length ? `: ${failed.slice(0, 3).join(', ')}` : ''}`);
 const outside = requests.filter((u) => /^https?:/.test(u) && !u.startsWith(BASE) && !u.startsWith(`${ORIGIN}/VANE/`));
