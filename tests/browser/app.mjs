@@ -874,12 +874,21 @@ check((await text('.sheet .form-error')) === 'The two passphrases don’t match.
 await shot('35-export-encrypted');
 await setVal('#enc-pass2', 'monsoon tea 42');
 await click('#enc-save');
-await sleep(2500);
-const encFiles = readdirSync(DL).filter((f) => f.endsWith('-encrypted.json'));
-check(encFiles.length === 1, `encrypted export downloads ${encFiles[0] ?? 'nothing'}`);
-const encText = readFileSync(join(DL, encFiles[0]), 'utf8');
-const env = JSON.parse(encText);
-check(env.format === 'crux-encrypted' && env.cipher.name === 'AES-GCM' && env.kdf.iterations === 600000 && !/Groceries|Emergency fund|weekly veg|125050|xss/.test(encText), 'the file is AES-GCM with 600,000 PBKDF2 iterations and contains none of the data in readable form');
+// 600,000 PBKDF2 iterations can take a few seconds on a cold CI machine: wait until the file is there and complete.
+let encFiles = [];
+let env = null;
+for (let i = 0; i < 60 && !env; i++) {
+  await sleep(250);
+  encFiles = readdirSync(DL).filter((f) => f.endsWith('-encrypted.json'));
+  try { env = encFiles.length ? JSON.parse(readFileSync(join(DL, encFiles[0]), 'utf8')) : null; } catch { env = null; }
+}
+check(encFiles.length === 1 && env, `encrypted export downloads ${encFiles[0] ?? 'nothing'}`);
+// The ciphertext is random base64, so short strings like "xss" turn up in it by chance: check that it is only base64,
+// and that nothing readable is anywhere else in the file.
+const { data: encData, ...encRest } = env ?? {};
+check(env?.format === 'crux-encrypted' && env?.cipher?.name === 'AES-GCM' && env?.kdf?.iterations === 600000, `the file is AES-GCM with 600,000 PBKDF2 iterations (${JSON.stringify(encRest)})`);
+check(typeof encData === 'string' && encData.length > 100 && /^[A-Za-z0-9+/]+=*$/.test(encData), 'the ciphertext is plain base64');
+check(!/Groceries|Emergency fund|weekly veg|125050|xss/.test(JSON.stringify(encRest)), 'nothing in the file is readable data');
 const entriesNow = (await idb('entries')).length;
 const encNode = (await send('DOM.querySelector', { nodeId: (await send('DOM.getDocument')).root.nodeId, selector: '#import-file' })).nodeId;
 await send('DOM.setFileInputFiles', { nodeId: encNode, files: [join(DL, encFiles[0])] });
