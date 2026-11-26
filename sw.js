@@ -1,7 +1,7 @@
 // Offline-first service worker (same pattern as VANE): precache the whole app, serve it from the cache,
 // swap versions atomically. Bump VERSION on every release, together with APP_VERSION in js/version.js
 // (a test checks they match). The cache name changes with it, so every installed copy re-downloads the app.
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const PREFIX = 'crux-';
 const CACHE = `${PREFIX}${VERSION}`;
 
@@ -23,9 +23,11 @@ const ASSETS = [
   './js/db.js',
   './js/income.js',
   './js/insights.js',
+  './js/lock.js',
   './js/money.js',
   './js/pwa.js',
   './js/router.js',
+  './js/secure.js',
   './js/seed.js',
   './js/store.js',
   './js/theme.js',

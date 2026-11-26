@@ -62,3 +62,40 @@ test('the splash in index.html matches the brand mark, and icon.svg is current',
   assert.ok(read('index.html').includes(`<!-- splash -->${splashHTML()}<!-- /splash -->`));
   assert.equal(read('icons/icon.svg').trim(), markSVG({ ground: 'rounded' }));
 });
+
+test('rendering audit: no HTML-string or code-string sinks anywhere in the app', () => {
+  const files = [...walk('js'), 'sw.js'];
+  const SINKS = [
+    [/\.innerHTML\s*=|\.outerHTML\s*=|insertAdjacentHTML|document\.write/, 'HTML string sink'],
+    [/\beval\s*\(|new\s+Function\s*\(/, 'code from a string'],
+    [/setTimeout\(\s*['"`]|setInterval\(\s*['"`]/, 'timer with a code string'],
+    [/setAttribute\(\s*['"]on\w+/, 'inline event handler attribute'],
+    [/setAttribute\(\s*['"](?:style|srcdoc)['"]/, 'style or srcdoc attribute (CSP blocks inline style; use CSSOM)'],
+    [/javascript:/i, 'javascript: URL'],
+    [/createContextualFragment|DOMParser|\.srcdoc\s*=/, 'markup parser'],
+  ];
+  for (const f of files) {
+    const code = read(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1'); // comments don't count
+    for (const [re, what] of SINKS) assert.doesNotMatch(code, re, `${f}: ${what}`);
+  }
+  // h() writes props as attributes only for safe names; event handlers go through addEventListener.
+  const ui = read('js/ui.js');
+  assert.match(ui, /else if \(k\.startsWith\('on'\)\) el\.addEventListener\(k\.slice\(2\), v\);/);
+  assert.match(ui, /el\.append\(c instanceof Node \? c : document\.createTextNode\(String\(c\)\)\)/);
+});
+
+test('rendering audit: index.html has no inline script, style or event handlers', () => {
+  const html = read('index.html');
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, 'inline <script>');
+  assert.doesNotMatch(html, /<style|\sstyle=|\son[a-z]+=/i);
+  for (const m of html.matchAll(/<script[^>]*src="([^"]+)"/g)) assert.ok(!/^https?:/.test(m[1]), `external script ${m[1]}`);
+});
+
+test('security: the app-lock PIN is never stored or exported, only its salted hash', () => {
+  const lock = read('js/lock.js');
+  assert.match(lock, /hashPin\(pin\)/);
+  assert.doesNotMatch(lock, /setMeta\('appLock',\s*\{\s*pin/);
+  const store = read('js/store.js');
+  const exp = store.slice(store.indexOf('export function exportData'), store.indexOf('export async function markExported'));
+  assert.doesNotMatch(exp, /appLock|lockFails|meta/, 'exportData must not include the lock');
+});

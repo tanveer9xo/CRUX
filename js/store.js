@@ -415,7 +415,7 @@ export async function importData(data, { keepGoalData = false, keepIncomeData = 
 /** Remove CRUX's own localStorage keys (names starting "crux") and nothing else: VANE shares this origin. */
 function clearCruxLocalStorage() {
   try {
-    for (const k of Object.keys(localStorage)) if (k.startsWith('crux')) localStorage.removeItem(k);
+    for (const k of Object.keys(localStorage)) if (k.startsWith('crux') && k !== 'crux-theme') localStorage.removeItem(k); // keeps the chosen theme
   } catch { /* storage blocked */ }
 }
 
@@ -428,7 +428,8 @@ export async function resetToStarter() {
   const month = currentMonth();
   const { now, cats, plan } = starterData(month);
   const goals = starterGoals(now);
-  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: now, goalsSeeded: now }, { clearMeta: true });
+  const appLock = await db.getMeta('appLock'); // a device setting, not data: the lock stays on after a reset
+  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: now, goalsSeeded: now, ...(appLock ? { appLock } : {}) }, { clearMeta: true });
   clearCruxLocalStorage();
   state.categories = cats;
   state.budgets = { [month]: plan };
@@ -442,7 +443,7 @@ export async function resetToStarter() {
 }
 
 export async function eraseAll() {
-  await db.replaceAll({ categories: [], budgets: {}, entries: [], goals: [], goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: Date.now(), goalsSeeded: Date.now(), lastExport: null });
+  await db.replaceAll({ categories: [], budgets: {}, entries: [], goals: [], goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: Date.now(), goalsSeeded: Date.now(), lastExport: null, appLock: null, lockFails: null });
   state.categories = [];
   state.budgets = {};
   state.entries = [];

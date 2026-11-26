@@ -52,6 +52,16 @@ Your data stays in this browser's IndexedDB on your device.
 
 Amounts are stored as whole paise (integers), never as floating-point rupees. They are shown in INR with Indian digit grouping (₹1,25,000).
 
+## Security
+
+- **Export encrypted:** a backup protected by a passphrase (AES-256-GCM, key from PBKDF2-SHA-256 with 600,000
+  iterations). Import recognises it and asks for the passphrase; a wrong one changes nothing.
+- **App lock:** a 4–8 digit PIN (only a salted hash is stored, never in backups). Locks on opening, or after 1 or
+  5 minutes in the background; wrong guesses are slowed down. It's a privacy screen: the data on the device is not
+  encrypted. "Forgot PIN" can only erase CRUX's data.
+- **Persistent storage:** Settings → Security shows whether the browser has agreed to keep CRUX's storage.
+- The Content-Security-Policy and rendering audit, and the limits above, are written up in `SECURITY.md`.
+
 ## Look and feel
 
 - **Design system:** every colour, size, radius, shadow and duration comes from CSS tokens at the top of

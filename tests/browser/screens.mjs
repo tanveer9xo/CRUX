@@ -99,6 +99,47 @@ await ev(`(async () => {
   return true;
 })()`);
 
+async function review(tag, w) {
+  if (CHECKS) {
+    const r = await ev(`(() => {
+      const out = { overflow: [], spill: [], small: [], emoji: [] };
+      if (document.documentElement.scrollWidth > innerWidth || innerWidth !== ${w}) out.overflow.push('page ' + document.documentElement.scrollWidth + ' / ' + innerWidth);
+      for (const el of document.querySelectorAll('body *')) {
+        if (el.closest('.sr-only, .chips-scroll')) continue;
+        const b = el.getBoundingClientRect();
+        if (b.width > 2 && b.right > ${w} + 1) out.overflow.push(String(el.className?.baseVal ?? el.className) || el.tagName);
+      }
+      for (const c of document.querySelectorAll('main .card, main .bill-row, main .strip-row, main .cat-row, main .row')) {
+        const cr = c.getBoundingClientRect();
+        for (const el of c.querySelectorAll('*')) { if (el.closest('.sr-only')) continue; const b = el.getBoundingClientRect(); if (b.width > 0 && b.right > cr.right + 0.5) out.spill.push(String(el.className?.baseVal ?? el.className) || el.tagName); }
+      }
+      for (const el of document.querySelectorAll('button, a[href], input:not([type=hidden]):not(.sr-only), select, summary, [role=button]')) {
+        if (el.closest('.sr-only') || el.disabled || el.tabIndex === -1 && el.tagName === 'INPUT') continue;
+        const b = el.getBoundingClientRect();
+        if (b.width === 0 || b.height === 0) continue;
+        if (b.width < 44 - 0.5 || b.height < 44 - 0.5) out.small.push((el.getAttribute('aria-label') || el.textContent.trim().slice(0, 24) || el.className) + ' ' + Math.round(b.width) + '×' + Math.round(b.height));
+      }
+      const texts = [document.body.innerText, ...[...document.querySelectorAll('[aria-label],[title],[placeholder],input')].map((e) => (e.getAttribute('aria-label') || '') + (e.getAttribute('title') || '') + (e.getAttribute('placeholder') || '') + (e.value || ''))];
+      for (const t of texts) { const m = t.match(${EMOJI}); if (m) out.emoji.push(m[0] + ' in “' + t.slice(Math.max(0, t.indexOf(m[0]) - 20), t.indexOf(m[0]) + 10).replace(/\\s+/g, ' ') + '”'); }
+      return out;
+    })()`);
+    check(r.overflow.length === 0, `${tag}: no horizontal overflow ${r.overflow.slice(0, 3).join(', ')}`);
+    check(r.spill.length === 0, `${tag}: nothing spills out of a card ${r.spill.slice(0, 3).join(', ')}`);
+    check(r.small.length === 0, `${tag}: every control is at least 44×44 ${r.small.slice(0, 4).join(' | ')}`);
+    check(r.emoji.length === 0, `${tag}: no emoji in rendered text ${r.emoji.slice(0, 3).join(' | ')}`);
+  }
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    const full = await ev(`Math.min(document.documentElement.scrollHeight, 2600)`);
+    await send('Emulation.setDeviceMetricsOverride', { width: w, height: full, deviceScaleFactor: 2, mobile: true });
+    await sleep(250);
+    const s = await send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(SHOTS, `${tag}.png`), Buffer.from(s.data, 'base64'));
+    await viewport(w);
+    await sleep(150);
+  }
+}
+
 const SCREENS = [
   ['home', '#/'], ['add', '#/add'], ['history', '#/history'], ['insights', '#/insights'], ['insights-savings', '#/insights?t=savings'],
   ['goals', '#/goals'], ['bills', '#/bills'], ['plan', '#/plan'], ['month', '#/month'], ['income', '#/income'], ['settings', '#/settings'],
@@ -115,48 +156,21 @@ for (const theme of THEMES) {
       await ev(`location.hash = ${JSON.stringify(hash)}; true`);
       await sleep(600);
       await ev(`window.scrollTo(0, 0); true`);
-      const tag = `${name}-${w}-${theme}`;
-      if (CHECKS) {
-        const r = await ev(`(() => {
-          const out = { overflow: [], spill: [], small: [], emoji: [] };
-          if (document.documentElement.scrollWidth > innerWidth || innerWidth !== ${w}) out.overflow.push('page ' + document.documentElement.scrollWidth + ' / ' + innerWidth);
-          for (const el of document.querySelectorAll('body *')) {
-            if (el.closest('.sr-only, .chips-scroll')) continue;
-            const b = el.getBoundingClientRect();
-            if (b.width > 2 && b.right > ${w} + 1) out.overflow.push(String(el.className?.baseVal ?? el.className) || el.tagName);
-          }
-          for (const c of document.querySelectorAll('main .card, main .bill-row, main .strip-row, main .cat-row, main .row')) {
-            const cr = c.getBoundingClientRect();
-            for (const el of c.querySelectorAll('*')) { if (el.closest('.sr-only')) continue; const b = el.getBoundingClientRect(); if (b.width > 0 && b.right > cr.right + 0.5) out.spill.push(String(el.className?.baseVal ?? el.className) || el.tagName); }
-          }
-          for (const el of document.querySelectorAll('button, a[href], input:not([type=hidden]):not(.sr-only), select, summary, [role=button]')) {
-            if (el.closest('.sr-only') || el.disabled || el.tabIndex === -1 && el.tagName === 'INPUT') continue;
-            const b = el.getBoundingClientRect();
-            if (b.width === 0 || b.height === 0) continue;
-            if (b.width < 44 - 0.5 || b.height < 44 - 0.5) out.small.push((el.getAttribute('aria-label') || el.textContent.trim().slice(0, 24) || el.className) + ' ' + Math.round(b.width) + '×' + Math.round(b.height));
-          }
-          const texts = [document.body.innerText, ...[...document.querySelectorAll('[aria-label],[title],[placeholder],input')].map((e) => (e.getAttribute('aria-label') || '') + (e.getAttribute('title') || '') + (e.getAttribute('placeholder') || '') + (e.value || ''))];
-          for (const t of texts) { const m = t.match(${EMOJI}); if (m) out.emoji.push(m[0] + ' in “' + t.slice(Math.max(0, t.indexOf(m[0]) - 20), t.indexOf(m[0]) + 10).replace(/\\s+/g, ' ') + '”'); }
-          return out;
-        })()`);
-        check(r.overflow.length === 0, `${tag}: no horizontal overflow ${r.overflow.slice(0, 3).join(', ')}`);
-        check(r.spill.length === 0, `${tag}: nothing spills out of a card ${r.spill.slice(0, 3).join(', ')}`);
-        check(r.small.length === 0, `${tag}: every control is at least 44×44 ${r.small.slice(0, 4).join(' | ')}`);
-        check(r.emoji.length === 0, `${tag}: no emoji in rendered text ${r.emoji.slice(0, 3).join(' | ')}`);
-      }
-      if (SHOTS) {
-        mkdirSync(SHOTS, { recursive: true });
-        const full = await ev(`Math.min(document.documentElement.scrollHeight, 2600)`);
-        await send('Emulation.setDeviceMetricsOverride', { width: w, height: full, deviceScaleFactor: 2, mobile: true });
-        await sleep(250);
-        const s = await send('Page.captureScreenshot', { format: 'png' });
-        writeFileSync(join(SHOTS, `${tag}.png`), Buffer.from(s.data, 'base64'));
-        await viewport(w);
-        await sleep(150);
-      }
+      await review(`${name}-${w}-${theme}`, w);
     }
   }
 }
+// The lock screen (and the Security settings with the lock on), in each theme and width.
+await ev(`import('./js/lock.js').then((m) => m.enableLock('2580', 0)).then(() => true)`);
+for (const theme of THEMES) {
+  await ev(`(() => { try { localStorage.setItem('crux-theme', ${JSON.stringify(theme)}); } catch {} return true; })()`);
+  for (const w of WIDTHS) {
+    await viewport(w);
+    await send('Page.navigate', { url: BASE });
+    await sleep(1500);
+    await review(`lock-${w}-${theme}`, w);
+  }
+}
 check(errors.length === 0, `no script errors ${errors.join(' | ')}`);
-console.log(`\n${failures ? `${failures} FAILED` : 'ALL PASSED'}  (${THEMES.join('/')} × ${WIDTHS.join('/')} px × ${SCREENS.length} screens)`);
+console.log(`\n${failures ? `${failures} FAILED` : 'ALL PASSED'}  (${THEMES.join('/')} × ${WIDTHS.join('/')} px × ${SCREENS.length} screens + the lock screen)`);
 finish(failures ? 1 : 0);

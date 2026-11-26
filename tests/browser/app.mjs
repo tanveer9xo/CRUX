@@ -57,6 +57,7 @@ const pending = new Map();
 const requests = [];
 const failed = [];
 const errors = [];
+const cspViolations = [];
 ws.addEventListener('message', (e) => {
   const m = JSON.parse(e.data);
   if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); if (m.error) p.reject(new Error(m.error.message)); else p.resolve(m.result); }
@@ -64,6 +65,7 @@ ws.addEventListener('message', (e) => {
   else if (m.method === 'Network.responseReceived' && m.params.response.status >= 400) failed.push(`${m.params.response.status} ${m.params.response.url}`);
   else if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text);
   else if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errors.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
+  else if (m.method === 'Log.entryAdded' && /Content.Security.Policy|Refused to/i.test(m.params.entry.text)) cspViolations.push(m.params.entry.text);
 });
 const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params })); });
 const ev = async (expression) => {
@@ -109,6 +111,7 @@ const idb = (store) => ev(`new Promise((ok, no) => { const r = indexedDB.open('c
 await send('Page.enable');
 await send('Runtime.enable');
 await send('Network.enable');
+await send('Log.enable');
 await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DL });
 await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
 await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
@@ -829,6 +832,120 @@ check((await idb('goals')).map((g) => g.id).sort().join() === 'goal_ef,goal_wd' 
 check(norm((await idb('income')).sort((a, b) => a.id.localeCompare(b.id))) === incomeHere && norm((await idb('incomeSources')).sort((a, b) => a.id.localeCompare(b.id))) === sourcesHere, 'income and recurring income from this device are kept exactly');
 check((await idb('bills')).find((b) => b.id === 'bill_maint').lastDay === true, 'its “last day of month” bill keeps the option');
 
+// ---- security: hostile text renders as text; encrypted export; app lock ----
+await ev(`(async () => {
+  const s = await import('./js/store.js');
+  const d = await import('./js/dates.js');
+  const today = d.todayYmd();
+  const cat = await s.addCategory({ name: '<img src=x onerror=window.__xss=1>', icon: 'tag', color: '#6B8FD6', budget: 1000 }, today.slice(0, 7));
+  await s.saveEntry({ amount: 12345, categoryId: cat.id, date: today, note: '"><svg onload=window.__xss=2>' });
+  await s.saveGoal({ name: '<script>window.__xss=3</script>', icon: 'target', color: '#9B87D9', target: 0, targetDate: null, monthlyPlan: 0, buckets: [{ id: 'bx', name: '<b onclick=alert(1)>B</b>' }], archived: false });
+  await s.saveBill({ name: '<iframe src=javascript:alert(4)>', type: 'bill', amount: 500, recurrence: 'monthly', dueDate: today, anchorDay: 1, lastDay: false, warnDays: 3, endDate: null, installmentsLeft: null, note: '<img src=y onerror=alert(5)>', categoryId: null, logExpense: false, archived: false, archivedReason: null });
+  await s.saveIncome({ source: '<img src=z onerror=window.__xss=6>', amount: 100, date: today, note: '', sourceId: null });
+  return true;
+})()`);
+for (const hash of ['#/', '#/history', '#/goals', '#/bills', '#/income', '#/plan', '#/insights', '#/month']) {
+  await nav(hash);
+  const r = await ev(`({ xss: window.__xss ?? null, imgs: document.querySelectorAll('main img, main iframe, main script, main b').length, handlers: [...document.querySelectorAll('main *')].filter((el) => [...el.attributes].some((a) => a.name.startsWith('on'))).length, literal: /<img src=|<script>|<iframe|"><svg/.test(document.querySelector('main').textContent) })`);
+  check(r.xss === null && r.imgs === 0 && r.handlers === 0 && (r.literal || hash === '#/month'), `hostile names render as text on ${hash} (no elements, no handlers${hash === '#/month' ? '' : ', shown literally'})`);
+}
+
+// Encrypted export.
+await nav('#/settings');
+await click('#export-encrypted');
+await setVal('#enc-pass', 'short');
+await click('#enc-save');
+check((await text('.sheet .form-error')) === 'Use at least 8 characters.', 'encrypted export: a short passphrase is refused');
+await setVal('#enc-pass', 'monsoon tea 42');
+await setVal('#enc-pass2', 'monsoon tea 43');
+await click('#enc-save');
+check((await text('.sheet .form-error')) === 'The two passphrases don’t match.', 'encrypted export: the passphrase must be typed twice the same');
+await shot('35-export-encrypted');
+await setVal('#enc-pass2', 'monsoon tea 42');
+await click('#enc-save');
+await sleep(2500);
+const encFiles = readdirSync(DL).filter((f) => f.endsWith('-encrypted.json'));
+check(encFiles.length === 1, `encrypted export downloads ${encFiles[0] ?? 'nothing'}`);
+const encText = readFileSync(join(DL, encFiles[0]), 'utf8');
+const env = JSON.parse(encText);
+check(env.format === 'crux-encrypted' && env.cipher.name === 'AES-GCM' && env.kdf.iterations === 600000 && !/Groceries|Emergency fund|weekly veg|125050|xss/.test(encText), 'the file is AES-GCM with 600,000 PBKDF2 iterations and contains none of the data in readable form');
+const entriesNow = (await idb('entries')).length;
+const encNode = (await send('DOM.querySelector', { nodeId: (await send('DOM.getDocument')).root.nodeId, selector: '#import-file' })).nodeId;
+await send('DOM.setFileInputFiles', { nodeId: encNode, files: [join(DL, encFiles[0])] });
+await sleep(700);
+check((await text('.sheet h2')) === 'Encrypted backup', 'importing an encrypted backup asks for its passphrase first');
+await setVal('#dec-pass', 'wrong passphrase');
+await click('#dec-open');
+await sleep(2500);
+check((await text('#dec-error')).startsWith('That passphrase doesn’t open this file. Nothing was changed.') && (await idb('entries')).length === entriesNow, 'a wrong passphrase is refused and nothing changes');
+await shot('36-import-passphrase');
+await setVal('#dec-pass', 'monsoon tea 42');
+await click('#dec-open');
+await sleep(3000);
+check((await text('.sheet h2')) === 'Replace all your data?' && (await text('.sheet')).includes(`${entriesNow} expenses`), 'the right passphrase opens it and shows the usual preview');
+await clickTop('Cancel');
+check((await idb('entries')).length === entriesNow, 'cancelling the preview changes nothing');
+
+// App lock.
+await nav('#/settings');
+check((await text('#lock-state')) === 'Off' && (await text('main')).includes('Storage'), 'Settings → Security: app lock is off by default; storage status is shown');
+await click('#lock-set');
+await setVal('#pin-new', '1111');
+await setVal('#pin-new2', '1111');
+await click('#pin-save');
+check((await text('.sheet .form-error')) === 'Avoid one digit repeated.', 'PIN: one repeated digit is refused');
+await setVal('#pin-new', '2580');
+await setVal('#pin-new2', '2581');
+await click('#pin-save');
+check((await text('.sheet .form-error')) === 'The two PINs don’t match.', 'PIN: must be typed twice the same');
+await setVal('#pin-new2', '2580');
+await shot('37-lock-set');
+await click('#pin-save');
+await sleep(1500);
+const lockRec = (await idb('meta')).find((m) => m.key === 'appLock')?.value;
+check(lockRec && lockRec.len === 4 && lockRec.after === 0 && !JSON.stringify(lockRec).includes('2580') && !('pin' in lockRec), 'the lock stores a salted hash and the PIN length, never the PIN');
+check((await text('#lock-state')).startsWith('On'), 'app lock is on');
+const exportedWithLock = await ev(`import('./js/store.js').then((s) => JSON.stringify(s.exportData()))`);
+check(!/appLock|lockFails|"hash"/.test(exportedWithLock), 'backups never include the lock');
+const keypad = async (digits) => { for (const dgt of digits) await ev(`document.querySelector('#lock .key[data-key="${dgt}"]').click(); true`); await sleep(1500); };
+await send('Page.reload');
+await sleep(2000);
+check(await ev(`!!document.getElementById('lock') && document.getElementById('view').inert && document.querySelector('.tabbar').inert`), 'after a reload CRUX opens locked, with the app behind it inert');
+await shot('38-locked');
+await keypad('1234');
+check((await text('#lock-status')) === 'Wrong PIN. Try again.' && await ev(`!!document.getElementById('lock')`), 'a wrong PIN keeps it locked');
+await keypad('2580');
+check(!(await ev(`!!document.getElementById('lock')`)) && !(await ev(`document.getElementById('view').inert`)), 'the right PIN unlocks');
+await ev(`(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); return true; })()`);
+check(await ev(`!!document.getElementById('lock')`), 'with “immediately”, the lock covers CRUX as soon as it goes to the background (before the app-switcher snapshot)');
+await ev(`(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); return true; })()`);
+for (let i = 0; i < 5; i++) await keypad('0001');
+check((await text('#lock-status')).startsWith('Too many wrong PINs. Try again in') && await ev(`document.querySelector('#lock .key[data-key="1"]').disabled`), 'after five wrong PINs the keypad waits');
+await send('Page.reload');
+await sleep(2000);
+check((await text('#lock-status')).startsWith('Too many wrong PINs'), 'the wait survives a reload');
+await ev(`new Promise((ok) => { const r = indexedDB.open('crux'); r.onsuccess = () => { const tx = r.result.transaction('meta', 'readwrite'); tx.objectStore('meta').put({ key: 'lockFails', value: null }); tx.oncomplete = () => { r.result.close(); ok(true); }; }; })`);
+await send('Page.reload');
+await sleep(2000);
+await click('#lock-forgot');
+await setVal('#forgot-confirm', 'erase');
+await click('#forgot-erase');
+check((await text('#lock .form-error')) === 'Type ERASE in capitals to confirm.' && (await idb('entries')).length === entriesNow, '“Forgot PIN” only erases after typing ERASE');
+await shot('39-lock-forgot');
+await click('#forgot-cancel');
+await keypad('2580');
+check(!(await ev(`!!document.getElementById('lock')`)), 'unlocked again');
+await nav('#/settings');
+await click('#lock-off');
+await setVal('#pin-current', '9999');
+await click('#pin-save');
+await sleep(1200);
+check((await text('.sheet .form-error')) === 'That isn’t your current PIN.', 'turning the lock off needs the current PIN');
+await setVal('#pin-current', '2580');
+await click('#pin-save');
+await sleep(1200);
+check((await text('#lock-state')) === 'Off' && !(await idb('meta')).find((m) => m.key === 'appLock')?.value, 'app lock is off and its hash is gone');
+
 // ---- reset to starter categories: CRUX's data only; VANE's data on the same origin survives ----
 const vaneSnapshot = () => ev(`(async () => {
   const dbs = {};
@@ -983,6 +1100,7 @@ check(JSON.stringify(await vaneSnapshot()) === JSON.stringify(vaneBefore), 'VANE
 check(failed.length === 0, `no failed requests${failed.length ? `: ${failed.slice(0, 3).join(', ')}` : ''}`);
 const outside = requests.filter((u) => /^https?:/.test(u) && !u.startsWith(BASE) && !u.startsWith(`${ORIGIN}/VANE/`));
 check(outside.length === 0, `nothing loads from outside /CRUX/${outside.length ? `: ${outside.slice(0, 3).join(', ')}` : ''}`);
+check(cspViolations.length === 0, `no Content-Security-Policy violations in any flow${cspViolations.length ? `: ${cspViolations.slice(0, 2).join(' | ')}` : ''}`);
 check(errors.length === 0, `no script errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 
 console.log(`\n${failures ? `${failures} FAILED` : 'ALL PASSED'}  (served at ${BASE})`);

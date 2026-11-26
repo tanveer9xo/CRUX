@@ -5,6 +5,7 @@ import { registerServiceWorker } from './pwa.js';
 import { todayYmd } from './dates.js';
 import { h, toast } from './ui.js';
 import { applyTheme, watchSystemTheme } from './theme.js';
+import { loadLock, lockEnabled, showLock, watchLock } from './lock.js';
 import * as home from './views/home.js';
 import * as add from './views/add.js';
 import * as historyView from './views/history.js';
@@ -60,6 +61,10 @@ try {
   await init();
   // Bills that have run out (no instalments left, or past their end date) archive themselves, with an Undo.
   const swept = await sweepEndedBills();
+  // App lock: cover the app before anything is drawn, then keep watching for time in the background.
+  await loadLock();
+  if (lockEnabled()) showLock();
+  watchLock();
   start();
   if (swept.length) {
     toast(swept.length === 1 ? `${swept[0].after.name} is finished and was archived.` : `${swept.length} finished bills were archived.`,

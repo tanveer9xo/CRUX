@@ -1,6 +1,6 @@
 {
   "name": "crux",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "type": "module",
   "description": "CRUX: personal offline expense tracker PWA. No build step and no dependencies; this file only holds the test/serve scripts.",

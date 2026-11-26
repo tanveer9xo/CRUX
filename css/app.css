@@ -602,6 +602,37 @@ select.input {
 .tabbar .tab-add.active .fab { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--accent); }
 @media (max-height: 520px) { .tabbar { display: none; } }
 
+/* ================= security: app lock & settings ================= */
+.setting-row { display: flex; align-items: center; gap: var(--space-3); }
+.seg-lock { margin-bottom: 0; background: var(--surface-2); }
+.lock {
+  position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; overflow-y: auto;
+  background: var(--bg); padding: calc(var(--space-6) + var(--safe-t)) var(--space-4) calc(var(--space-6) + var(--safe-b));
+  animation: fade var(--dur-med) var(--ease-out);
+}
+.lock-inner { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: var(--space-3); text-align: center; }
+.lock-inner h1 { font-size: var(--text-xl); }
+.lock-inner .input, .lock-inner .btn-row { width: 100%; }
+.lock-badge { display: grid; place-items: center; width: 56px; height: 56px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); color: var(--accent); }
+.lock-badge.warn { background: color-mix(in srgb, var(--warning) 14%, var(--surface-2)); color: var(--warning); }
+.lock-badge .ic { width: 28px; height: 28px; }
+.pin-dots { display: flex; gap: var(--space-3); min-height: 16px; margin: var(--space-2) 0; }
+.pin-dot { width: 14px; height: 14px; border-radius: var(--radius-pill); border: 2px solid var(--text-3); transition: background var(--dur-fast), border-color var(--dur-fast); }
+.pin-dot.on { background: var(--accent); border-color: var(--accent); }
+.lock-status { min-height: 1.45em; color: var(--danger); font-weight: var(--weight-bold); font-size: var(--text-md); }
+.keypad { display: grid; grid-template-columns: repeat(3, 72px); gap: var(--space-3); justify-content: center; margin-top: var(--space-2); }
+.key {
+  width: 72px; height: 72px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-1); color: var(--text-1);
+  font-size: var(--text-2xl); font-weight: var(--weight-bold); display: grid; place-items: center;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast);
+}
+.key:active:not(:disabled) { transform: scale(0.94); background: var(--surface-3); }
+.key:disabled { opacity: 0.4; }
+.key-text { font-size: var(--text-sm); color: var(--info); border-color: transparent; background: transparent; }
+.lock-note { max-width: 300px; margin-top: var(--space-3); }
+.lock.shake .pin-dots { animation: shake var(--dur-slow) var(--ease-out); }
+@keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+
 /* ================= reduced motion: no non-essential animation ================= */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
