@@ -114,3 +114,34 @@ export function byNewest(a, b) {
   if (a.date !== b.date) return a.date < b.date ? 1 : -1;
   return (b.createdAt ?? 0) - (a.createdAt ?? 0);
 }
+
+// ---------- the same maths over any period (calendar month or pay cycle; see periods.js) ----------
+/** "To date" against the same days of the previous period: `w` comes from periods.toDate(). */
+export function periodToDate(entries, w) {
+  return { current: w.current, previous: w.previous, ...compareRows(spendBetween(entries, w.current.from, w.current.to), spendBetween(entries, w.previous.from, w.previous.to)) };
+}
+
+/** A whole period against the whole period before it. */
+export function fullPeriod(entries, p, prev) {
+  return { month: p.key, prevMonth: prev.key, period: p, prevPeriod: prev, ...compareRows(spendBetween(entries, p.from, p.to), spendBetween(entries, prev.from, prev.to)) };
+}
+
+/** Trend over a list of periods (oldest first): { months: keys, periods, total, byCat }. */
+export function trendOver(entries, periods) {
+  const total = periods.map(() => 0);
+  const byCat = {};
+  for (const e of entries) {
+    const i = periods.findIndex((p) => e.date >= p.from && e.date <= p.to);
+    if (i < 0) continue;
+    total[i] += e.amount;
+    (byCat[e.categoryId] ??= periods.map(() => 0))[i] += e.amount;
+  }
+  return { months: periods.map((p) => p.key), periods, total, byCat };
+}
+
+/** Keys of periods before `current` that have spending, newest first. `periodOf(ymd)` maps a date to its period. */
+export function completedPeriods(entries, current, periodOf) {
+  const set = new Map();
+  for (const e of entries) if (e.date < current.from) { const p = periodOf(e.date); set.set(p.key, p); }
+  return [...set.values()].sort((a, b) => (a.from < b.from ? 1 : -1));
+}

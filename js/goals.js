@@ -5,7 +5,7 @@
 // Goal adds are a separate list from expenses. Nothing here, and nothing in insights.js or budget.js, mixes them:
 // they never count toward spending, budgets, month-to-date or trends (tests/release.test.js checks the imports).
 
-import { monthOf, daysBetween, monthsInclusive } from './dates.js';
+import { monthOf, daysBetween, monthsInclusive, firstDay, lastDay } from './dates.js';
 import { pctUsed } from './money.js';
 
 export const hasTarget = (g) => Number.isSafeInteger(g.target) && g.target > 0;
@@ -21,11 +21,15 @@ export function savedAmount(goalAdds, goalId, bucketId) {
   return sum(bucketId === undefined ? own : own.filter((a) => (a.bucketId ?? null) === bucketId));
 }
 
-/** Net added to one goal during a month (withdrawals reduce it). */
-export const monthNet = (goalAdds, goalId, month) => sum(addsFor(goalAdds, goalId).filter((a) => monthOf(a.date) === month));
+/** A calendar month ("YYYY-MM") or a period ({ from, to }) as a date range. */
+export const rangeOf = (x) => (typeof x === 'string' ? { from: firstDay(x), to: lastDay(x) } : x);
+const within = (a, r) => a.date >= r.from && a.date <= r.to;
 
-/** Net saved in a month across every goal: the "Saved this month" line in Insights. */
-export const savedInMonth = (goalAdds, month) => sum(goalAdds.filter((a) => monthOf(a.date) === month));
+/** Net added to one goal during a month or period (withdrawals reduce it). */
+export const monthNet = (goalAdds, goalId, period) => { const r = rangeOf(period); return sum(addsFor(goalAdds, goalId).filter((a) => within(a, r))); };
+
+/** Net saved in a month or period across every goal: the "Saved this month/cycle" line. */
+export const savedInMonth = (goalAdds, period) => { const r = rangeOf(period); return sum(goalAdds.filter((a) => within(a, r))); };
 
 /**
  * Per-month saving needed to reach the target by the target date. Counts the current month and the target month,
@@ -55,11 +59,11 @@ export function maxWithdrawal(goalAdds, goalId, bucketId, excludeId = null) {
   return Math.max(0, sum(addsFor(goalAdds, goalId).filter((a) => a.id !== excludeId && (a.bucketId ?? null) === (bucketId ?? null))));
 }
 
-/** Everything a goal card shows. */
-export function goalSummary(goal, goalAdds, today) {
+/** Everything a goal card shows. `period` (a month key or { from, to }) is "this month/cycle"; default: today's month. */
+export function goalSummary(goal, goalAdds, today, period = monthOf(today)) {
   const saved = savedAmount(goalAdds, goal.id);
   const targeted = hasTarget(goal);
-  const month = monthOf(today);
+  const month = period;
   const added = monthNet(goalAdds, goal.id, month);
   return {
     saved,

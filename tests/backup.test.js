@@ -22,6 +22,9 @@ const sample = () => ({
     { id: 'in2', sourceId: null, source: 'Bonus', amount: 1250050, date: '2026-11-15', note: 'diwali', createdAt: 11 },
   ],
   incomeSources: [{ id: 'src1', name: 'Salary', amount: 5000000, nextDate: '2026-12-31', anchorDay: 31, lastDay: true, note: '', archived: false, createdAt: 12 }],
+  periodSettings: { mode: 'cycle', nthLast: 2, holidays: ['2026-12-25'] },
+  cycles: [{ start: '2026-10-29', source: 'rule' }, { start: '2026-11-27', source: 'confirmed' }],
+  cycleBudgets: { '2026-11': { food: 800000 }, '2026-12': { food: 900000 } },
   bills: [{
     id: 'bill1', name: 'Bike EMI', type: 'emi', amount: 350000, recurrence: 'monthly', dueDate: '2026-12-05', anchorDay: 5, warnDays: 3,
     endDate: null, installmentsLeft: 7, note: '', categoryId: 'food', logExpense: true, lastDay: false, archived: false, archivedReason: null, createdAt: 8,
@@ -43,9 +46,10 @@ test('a backup round-trips exactly, goals and bills included', () => {
   assert.ok(r.ok, r.error);
   assert.deepEqual(r.data, sample());
   assert.equal(r.hasGoalData, true);
-  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 2, goalAdds: 3, bills: 2, income: 2, incomeSources: 1 });
+  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 2, goalAdds: 3, bills: 2, income: 2, incomeSources: 1, cycles: 2 });
   assert.equal(r.exportedAt, '2026-11-24T10:00:00.000Z');
-  assert.equal(JSON.parse(file).schema, 3);
+  assert.equal(JSON.parse(file).schema, 4);
+  assert.equal(r.hasCycleData, true);
   assert.equal(r.hasIncomeData, true);
 });
 
@@ -60,7 +64,7 @@ test('a backup exported from 1.0.2 still imports cleanly (no goals or bills in i
   const r = parseBackup(text);
   assert.ok(r.ok, r.error);
   assert.equal(r.hasGoalData, false); // so the app keeps the goals and bills already on the device
-  assert.deepEqual(r.counts, { categories: 3, entries: 3, months: 2, goals: 0, goalAdds: 0, bills: 0, income: 0, incomeSources: 0 });
+  assert.deepEqual(r.counts, { categories: 3, entries: 3, months: 2, goals: 0, goalAdds: 0, bills: 0, income: 0, incomeSources: 0, cycles: 0 });
   assert.equal(r.hasIncomeData, false);
   assert.deepEqual(r.data.goals, []);
   assert.equal(r.data.entries[0].amount, 125050);
@@ -107,10 +111,10 @@ test('damaged goals, goal adds and bills are rejected whole', () => {
 });
 
 test('a backup from a goals-aware build with nothing in them is fine', () => {
-  const b = buildBackup({ ...sample(), goals: [], goalAdds: [], bills: [], income: [], incomeSources: [] });
+  const b = buildBackup({ ...sample(), goals: [], goalAdds: [], bills: [], income: [], incomeSources: [], cycles: [], cycleBudgets: {} });
   const r = parseBackup(JSON.stringify(b));
   assert.ok(r.ok);
-  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 0, goalAdds: 0, bills: 0, income: 0, incomeSources: 0 });
+  assert.deepEqual(r.counts, { categories: 1, entries: 1, months: 1, goals: 0, goalAdds: 0, bills: 0, income: 0, incomeSources: 0, cycles: 0 });
 });
 
 test('imported text fields are trimmed to size and colours are checked', () => {
@@ -163,7 +167,7 @@ test('a backup from the previous version (1.1.1, schema 2) still imports cleanly
   const r = parseBackup(readFileSync(new URL('./fixtures/backup-1.1.1.json', import.meta.url), 'utf8'));
   assert.ok(r.ok, r.error);
   assert.deepEqual([r.hasGoalData, r.hasIncomeData], [true, false]); // so the app keeps the income already on the device
-  assert.deepEqual(r.counts, { categories: 2, entries: 1, months: 1, goals: 2, goalAdds: 2, bills: 2, income: 0, incomeSources: 0 });
+  assert.deepEqual(r.counts, { categories: 2, entries: 1, months: 1, goals: 2, goalAdds: 2, bills: 2, income: 0, incomeSources: 0, cycles: 0 });
   assert.deepEqual(r.data.income, []);
   assert.equal(r.data.goals[0].order, 0); // goal priority (order) is carried
   assert.equal(r.data.bills[1].lastDay, true);
@@ -222,4 +226,30 @@ test('an exported icon key is kept, and an unknown one is replaced by the defaul
   const b = buildBackup(sample());
   b.categories[0].icon = 'not-an-icon';
   assert.equal(parseBackup(JSON.stringify(b)).data.categories[0].icon, 'shopping-basket');
+});
+
+test('a backup from the previous version (schema 3, no cycles) imports in calendar-month mode', () => {
+  const b = buildBackup(sample());
+  b.schema = 3;
+  delete b.periodSettings; delete b.cycles; delete b.cycleBudgets;
+  const r = parseBackup(JSON.stringify(b));
+  assert.ok(r.ok, r.error);
+  assert.equal(r.hasCycleData, false);
+  assert.deepEqual(r.data.periodSettings, { mode: 'month', nthLast: 2, holidays: [] });
+  assert.deepEqual([r.data.cycles, r.data.cycleBudgets], [[], {}]);
+  assert.equal(r.data.income.length, 2); // and the rest of a schema-3 file still comes through
+});
+
+test('pay-cycle settings, starts and budgets round-trip; damaged ones are refused whole', () => {
+  const r = parseBackup(JSON.stringify(buildBackup(sample())));
+  assert.deepEqual([r.data.periodSettings, r.data.cycles, r.data.cycleBudgets], [sample().periodSettings, sample().cycles, sample().cycleBudgets]);
+  assert.equal(bad((b) => { b.periodSettings.mode = 'weekly'; }).ok, false);
+  assert.equal(bad((b) => { b.periodSettings.nthLast = 0; }).ok, false);
+  assert.equal(bad((b) => { b.periodSettings.holidays = ['2026-02-30']; }).ok, false);
+  assert.equal(bad((b) => { b.cycles[1].source = 'guess'; }).ok, false);
+  assert.equal(bad((b) => { b.cycles[1].start = '2026-10-29'; }).ok, false); // two cycles starting the same day
+  assert.equal(bad((b) => { b.cycles.push({ start: '2026-11-30', source: 'confirmed' }); }).ok, false); // a second "November"
+  assert.equal(bad((b) => { b.cycleBudgets['2026-11'].ghost = 5; }).ok, false);
+  assert.equal(bad((b) => { b.cycleBudgets['2026-11'].food = 1.5; }).ok, false);
+  assert.equal(bad((b) => { delete b.cycles; }).ok, false);
 });

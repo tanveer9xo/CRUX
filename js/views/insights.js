@@ -2,10 +2,11 @@
 import { h, icon, badge, bar, svgEl, statusText } from '../ui.js';
 import { formatINR, formatCompact } from '../money.js';
 import { todayYmd, monthOf, addMonths, rangeLabel, monthLabel, monthName, daysLeftInMonth, isMonth } from '../dates.js';
-import { monthToDate, fullMonth, trend, progress, monthSpend, dailyAllowance, completedMonths } from '../insights.js';
+import { progress, spendBetween, periodToDate, fullPeriod, trendOver, completedPeriods } from '../insights.js';
 import { savedInMonth } from '../goals.js';
 import { savingsMtd, incomeTrend } from '../income.js';
-import { state, planFor, catById } from '../store.js';
+import { state, planFor, catById, periods, cycleMode } from '../store.js';
+import { periodNav, unitWord } from './cyclesui.js';
 import { setQuery } from '../router.js';
 import { monthNav, deltaPill, emptyState, pageHead } from './common.js';
 
@@ -22,7 +23,7 @@ export function render({ query }) {
   return h('div', { class: 'page insights' },
     pageHead('Insights'),
     h('div', { class: 'segmented seg4', role: 'tablist', 'aria-label': 'Insight' },
-      TABS.map(([k, label]) => h('button', { class: 'seg', type: 'button', role: 'tab', 'aria-selected': String(k === t), onclick: () => setQuery({ t: k, m: null }) }, label))),
+      TABS.map(([k, label]) => [k, k === 'months' && cycleMode() ? 'Cycles' : label]).map(([k, label]) => h('button', { class: 'seg', type: 'button', role: 'tab', 'aria-selected': String(k === t), onclick: () => setQuery({ t: k, m: null }) }, label))),
     body);
 }
 
@@ -53,32 +54,43 @@ function totalCompare(total, curLabel, prevLabel) {
 }
 
 function mtdView(today) {
-  const r = monthToDate(state.entries, today);
-  const cur = rangeLabel(r.current.from, r.current.to);
-  const prev = rangeLabel(r.previous.from, r.previous.to);
+  const P = periods();
+  const per = P.current();
+  const w = P.toDate(per, today);
+  const r = periodToDate(state.entries, w);
+  const span = (a, b) => (a.slice(0, 7) === b.slice(0, 7) ? rangeLabel(a, b) : `${rangeLabel(a, a)} – ${rangeLabel(b, b)}`);
+  const cur = span(r.current.from, r.current.to);
+  const prev = span(r.previous.from, r.previous.to);
+  const day = P.dayOf(per, today);
+  const lede = per.kind === 'cycle'
+    ? `Day ${day} of the ${per.label.split(' ')[0]} cycle (${cur}) compared with days 1–${P.dayOf(w.prevPeriod, r.previous.to)} of the ${w.prevPeriod.label.split(' ')[0]} cycle (${prev}).`
+    : `${cur} compared with ${prev}.`;
   return h('div', { role: 'tabpanel' },
-    h('p', { class: 'muted small lede' }, `${cur} compared with ${prev}.`),
+    h('p', { class: 'muted small lede', id: 'mtd-lede' }, lede),
     totalCompare(r.total, `Spent ${cur}`, prev),
     // Money put into goals. Kept out of every spending figure on this screen.
-    h('p', { class: 'saved-line', id: 'insights-saved' }, h('span', { class: 'muted' }, 'Saved this month: '), h('strong', { class: 'num' }, formatINR(savedInMonth(state.goalAdds, monthOf(today)))),
+    h('p', { class: 'saved-line', id: 'insights-saved' }, h('span', { class: 'muted' }, `Saved this ${unitWord()}: `), h('strong', { class: 'num' }, formatINR(savedInMonth(state.goalAdds, per))),
       h('a', { class: 'link', href: '#/goals' }, 'Goals')),
     r.rows.length ? h('section', {}, h('h2', {}, 'By category'), compareList(r.rows)) : emptyState('Nothing to compare yet', 'Add expenses and this fills in.'));
 }
 
 function monthsView(today, m) {
-  const current = monthOf(today);
-  const done = completedMonths(state.entries, current);
-  if (!done.length) return h('div', { role: 'tabpanel' }, emptyState('No completed months yet', 'Full-month comparisons appear once a month with expenses has ended.'));
-  const month = isMonth(m) && m < current ? m : done[0];
-  const r = fullMonth(state.entries, month);
-  const tr = trend(state.entries, month, 6);
+  const P = periods();
+  const cur = P.current();
+  const unit = unitWord();
+  const done = completedPeriods(state.entries, cur, P.of);
+  if (!done.length) return h('div', { role: 'tabpanel' }, emptyState(`No completed ${unit}s yet`, `Comparisons appear once a ${unit} with expenses has ended.`, null, 'chart'));
+  const per = isMonth(m) && m < cur.key ? P.byKey(m) : done[0];
+  const month = per.key;
+  const r = fullPeriod(state.entries, per, P.prev(per));
+  const tr = trendOver(state.entries, P.ending(per, 6));
   const cats = Object.keys(tr.byCat).sort((a, b) => order(a) - order(b));
   return h('div', { role: 'tabpanel' },
-    monthNav(month, (mm) => setQuery({ m: mm }), { max: addMonths(current, -1) }),
-    totalCompare(r.total, `Spent in ${monthLabel(month)}`, monthLabel(r.prevMonth)),
+    periodNav(per, (mm) => setQuery({ m: mm }), { maxKey: P.prev(cur).key }),
+    totalCompare(r.total, `Spent in ${per.kind === 'cycle' ? `the ${monthLabel(month)} cycle` : monthLabel(month)}`, r.prevPeriod.kind === 'cycle' ? `${monthLabel(r.prevMonth)} cycle (${r.prevPeriod.range})` : monthLabel(r.prevMonth)),
     r.rows.length ? h('section', {}, h('h2', {}, `By category vs ${monthName(r.prevMonth, false)}`), compareList(r.rows)) : null,
     h('section', { 'aria-labelledby': 'h-trend' },
-      h('h2', { id: 'h-trend' }, `6 months to ${monthLabel(month, { short: true })}`),
+      h('h2', { id: 'h-trend' }, `6 ${unit}s to ${monthLabel(month, { short: true })}`),
       h('div', { class: 'card' }, h('p', { class: 'muted small' }, 'Total'), barChart(tr.months, tr.total, 'var(--accent)', 'Total', true)),
       h('div', { class: 'multiples' }, cats.map((id) => {
         const cat = catById(id);
@@ -133,28 +145,31 @@ function barChart(months, values, color, label, big) {
 }
 
 function budgetView(today) {
-  const month = monthOf(today);
+  const P = periods();
+  const per = P.current();
+  const month = per.key;
   const plan = planFor(month);
-  const p = progress(plan, monthSpend(state.entries, month).byCat);
+  const p = progress(plan, spendBetween(state.entries, per.from, per.to).byCat);
   const t = p.total;
-  const days = daysLeftInMonth(today);
+  const days = P.daysLeft(per, today);
+  const dailyAllowance = (rem) => (rem > 0 ? Math.floor(rem / days) : 0);
   const rows = [...p.rows].sort((a, b) => order(a.categoryId) - order(b.categoryId));
-  if (!rows.length && !p.unplanned.length) return h('div', { role: 'tabpanel' }, emptyState('No budget for this month', 'Set budgets in Plan.', h('a', { class: 'btn', href: '#/plan' }, 'Open Plan')));
+  if (!rows.length && !p.unplanned.length) return h('div', { role: 'tabpanel' }, emptyState(`No budget for this ${unitWord()}`, 'Set budgets in Plan.', h('a', { class: 'btn', href: '#/plan' }, 'Open Plan')));
   return h('div', { role: 'tabpanel' },
-    h('p', { class: 'muted small lede' }, `${monthLabel(month)} · ${days} day${days === 1 ? '' : 's'} left, today included.`),
+    h('p', { class: 'muted small lede' }, `${per.kind === 'cycle' ? `${monthLabel(month)} cycle, ${per.range}` : monthLabel(month)} · ${days} day${days === 1 ? '' : 's'} left, today included.`),
     h('section', { class: 'card' },
       h('div', { class: 'prog-grid' },
         stat('Used', formatINR(t.spent, { decimals: 'never' }), t.pct !== null ? `${t.pct}% of ${formatINR(t.budget, { decimals: 'never' })}` : 'No budget'),
         stat(t.remaining >= 0 ? 'Remaining' : 'Over by', formatINR(Math.abs(t.remaining), { decimals: 'never' }), t.remaining > 0 ? `${formatINR(dailyAllowance(t.remaining, today), { decimals: 'never' })} a day` : statusText[t.status] || '—')),
       bar(t.status, t.pct)),
     h('ul', { class: 'prog-list' },
-      rows.map((r) => progRow(r, today)),
-      p.unplanned.map((u) => progRow({ ...u, budget: 0, remaining: -u.spent, pct: null, status: 'over', unplanned: true }, today))));
+      rows.map((r) => progRow(r, dailyAllowance)),
+      p.unplanned.map((u) => progRow({ ...u, budget: 0, remaining: -u.spent, pct: null, status: 'over', unplanned: true }, dailyAllowance))));
 }
 
 const stat = (label, value, sub) => h('div', { class: 'stat' }, h('p', { class: 'muted small' }, label), h('p', { class: 'stat-val num' }, value), h('p', { class: 'muted small' }, sub));
 
-function progRow(r, today) {
+function progRow(r, dailyAllowance) {
   const cat = catById(r.categoryId);
   const right = r.unplanned ? 'Not in plan' : r.remaining >= 0 ? `${formatINR(r.remaining, { decimals: 'never' })} left` : `${formatINR(-r.remaining, { decimals: 'never' })} over`;
   return h('li', { class: `prog-row st-${r.status}` },
@@ -163,7 +178,7 @@ function progRow(r, today) {
     h('div', { class: 'prog-foot' },
       h('span', { class: 'num muted' }, `${formatINR(r.spent, { decimals: 'never' })} of ${formatINR(r.budget, { decimals: 'never' })}`),
       h('span', { class: `num prog-left ${r.status}` }, r.status !== 'ok' ? icon('alert', 'ic ic-inline') : null, right,
-        !r.unplanned && r.remaining > 0 ? h('span', { class: 'muted' }, ` · ${formatINR(dailyAllowance(r.remaining, today), { decimals: 'never' })}/day`) : null)));
+        !r.unplanned && r.remaining > 0 ? h('span', { class: 'muted' }, ` · ${formatINR(dailyAllowance(r.remaining), { decimals: 'never' })}/day`) : null)));
 }
 
 // ---------- savings: income, spending and saving, kept out of every spending figure above ----------
@@ -178,8 +193,10 @@ function ratePill(points) {
 }
 
 function savingsView(today) {
-  const mtd = savingsMtd({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, today });
-  const tr = incomeTrend({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, endMonth: monthOf(today), n: 6 });
+  const P = periods();
+  const per = P.current();
+  const mtd = savingsMtd({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, today, window: P.toDate(per, today) });
+  const tr = incomeTrend({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, periods: P.ending(per, 6) });
   const cur = rangeLabel(mtd.current.from, mtd.current.to);
   const prev = rangeLabel(mtd.previous.from, mtd.previous.to);
   const money = (v) => formatINR(v, { decimals: 'never' });

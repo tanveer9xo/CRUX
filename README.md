@@ -52,6 +52,23 @@ Your data stays in this browser's IndexedDB on your device.
 
 Amounts are stored as whole paise (integers), never as floating-point rupees. They are shown in INR with Indian digit grouping (₹1,25,000).
 
+## Pay cycles (1.4.0)
+
+- **Budget period** (Settings): *Pay cycle* (default for new installs) or *Calendar month* (exactly as before).
+- A cycle starts on salary day, the Nth-last working day (Mon–Fri, default the second-last) of a month, skipping
+  any holidays you list, and ends the day before the next one. Each cycle is named after the month holding most of
+  its days (ties go to the later month): 29 Oct – 26 Nov is "November". The dates show under the name everywhere.
+- Cycle starts are stored as data ("rule" or "confirmed"), so past cycles never change when the rule or holidays
+  change. **Salary received** (Home, Month plan, the cycle picker) confirms the next start; a salary close to an
+  expected start moves that start (late or early salary). A start can be edited later with a preview of which
+  expenses move; overlapping, zero-length or same-named cycles are refused. Until confirmed, dates are "expected".
+- Budgets are stored per cycle (carried forward; an edit applies from the cycle shown onward). Home, History,
+  Insights (day-of-cycle comparison, completed cycles, 6-cycle trends), goals, bills ("due this cycle"), the salary
+  (expected on the cycle's start), savings rate, leftover and allocation all follow cycles. Records keep real dates.
+- Upgrading: an install with data stays on calendar months and offers the switch with a one-time summary of what
+  moves. The calendar-month budgets are kept, so switching back restores them. Backups (schema 4) carry the cycles;
+  older backups import in calendar-month mode.
+
 ## Security
 
 - **Export encrypted:** a backup protected by a passphrase (AES-256-GCM, key from PBKDF2-SHA-256 with 600,000

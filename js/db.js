@@ -9,12 +9,14 @@
 //                 categoryId, logExpense, archived, archivedReason, createdAt }
 //   income      { id, sourceId, source, amount (paise > 0), date, note, createdAt }   (kept apart from expenses and goal adds)
 //   incomeSources { id, name, amount, nextDate, anchorDay, lastDay, note, archived, createdAt }   (recurring monthly income)
-//   meta        { key, value }   (lastExport, seeded, goalsSeeded)
+//   cycles      { start, source: "rule" | "confirmed" }   (pay-cycle starts; past ones never change)
+//   cycleBudgets { key: cycle name "YYYY-MM", plan }   (pay-cycle budgets; "budgets" keeps the calendar-month ones)
+//   meta        { key, value }   (lastExport, seeded, goalsSeeded, periodSettings, appLock, lockFails)
 import { SCHEMA_VERSION } from './version.js';
 
 export const DB_NAME = 'crux';
-const STORES = ['categories', 'budgets', 'entries', 'meta', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources'];
-const DATA_STORES = ['categories', 'budgets', 'entries'];
+const STORES = ['categories', 'budgets', 'entries', 'meta', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources', 'cycles', 'cycleBudgets'];
+const DATA_STORES = ['categories', 'budgets', 'entries', 'cycles', 'cycleBudgets'];
 const GOAL_STORES = ['goals', 'goalAdds', 'bills'];
 const INCOME_STORES = ['income', 'incomeSources'];
 let dbp = null;
@@ -39,6 +41,9 @@ export function openDB() {
       // Version 3 (1.2.0): income. Upgrading from 1.0.x or 1.1.x only adds these stores; nothing existing is touched.
       if (!db.objectStoreNames.contains('income')) db.createObjectStore('income', { keyPath: 'id' }).createIndex('date', 'date');
       if (!db.objectStoreNames.contains('incomeSources')) db.createObjectStore('incomeSources', { keyPath: 'id' });
+      // Version 4 (1.4.0): pay cycles. Only adds stores; calendar-month budgets stay where they are.
+      if (!db.objectStoreNames.contains('cycles')) db.createObjectStore('cycles', { keyPath: 'start' });
+      if (!db.objectStoreNames.contains('cycleBudgets')) db.createObjectStore('cycleBudgets', { keyPath: 'key' });
     };
     r.onsuccess = () => {
       const db = r.result;
@@ -89,7 +94,7 @@ export const setMeta = (key, value) => put('meta', { key, value });
  * touched.
  */
 export async function replaceAll(data, meta = {}, { clearMeta = false, keepGoalData = false, keepIncomeData = false } = {}) {
-  const { categories = [], budgets = {}, entries = [], goals = [], goalAdds = [], bills = [], income = [], incomeSources = [] } = data;
+  const { categories = [], budgets = {}, entries = [], goals = [], goalAdds = [], bills = [], income = [], incomeSources = [], cycles = [], cycleBudgets = {} } = data;
   const db = await openDB();
   const tx = db.transaction(STORES, 'readwrite');
   const wipe = [...DATA_STORES, ...(keepGoalData ? [] : GOAL_STORES), ...(keepIncomeData ? [] : INCOME_STORES), ...(clearMeta ? ['meta'] : [])];
@@ -97,6 +102,8 @@ export async function replaceAll(data, meta = {}, { clearMeta = false, keepGoalD
   for (const c of categories) tx.objectStore('categories').put(c);
   for (const [month, plan] of Object.entries(budgets)) tx.objectStore('budgets').put({ month, plan });
   for (const e of entries) tx.objectStore('entries').put(e);
+  for (const c of cycles) tx.objectStore('cycles').put(c);
+  for (const [key, plan] of Object.entries(cycleBudgets)) tx.objectStore('cycleBudgets').put({ key, plan });
   if (!keepGoalData) {
     for (const g of goals) tx.objectStore('goals').put(g);
     for (const a of goalAdds) tx.objectStore('goalAdds').put(a);

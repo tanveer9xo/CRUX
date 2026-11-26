@@ -1,11 +1,12 @@
-// History: one month at a time (or all months while searching), filtered by category, grouped by day.
+// History: one period (month or pay cycle) at a time, or all of them while searching; by category; grouped by day.
 import { h, icon, badge } from '../ui.js';
 import { formatINR } from '../money.js';
 import { monthOf, todayYmd, dayLabel, isMonth, monthLabel } from '../dates.js';
 import { groupByDay } from '../insights.js';
-import { state, catById } from '../store.js';
+import { state, catById, periods } from '../store.js';
 import { setQuery } from '../router.js';
-import { monthNav, entryRow, emptyState, pageHead } from './common.js';
+import { entryRow, emptyState, pageHead } from './common.js';
+import { periodNav, unitWord } from './cyclesui.js';
 
 export const name = 'history';
 export const tab = 'history';
@@ -14,7 +15,9 @@ export const title = 'History';
 let query = ''; // kept while moving between months; not put in the URL
 
 export function render({ query: q }) {
-  const month = isMonth(q.get('m')) ? q.get('m') : monthOf(todayYmd());
+  const P = periods();
+  const per = isMonth(q.get('m')) ? P.byKey(q.get('m')) : P.current();
+  const month = per.key;
   const cat = q.get('c') && catById(q.get('c')) ? q.get('c') : null;
   const allMonths = q.get('all') === '1';
 
@@ -24,7 +27,7 @@ export function render({ query: q }) {
   const draw = () => {
     const needle = query.trim().toLowerCase();
     const scopeAll = allMonths && needle;
-    const rows = state.entries.filter((e) => (scopeAll || monthOf(e.date) === month)
+    const rows = state.entries.filter((e) => (scopeAll || (e.date >= per.from && e.date <= per.to))
       && (!cat || e.categoryId === cat)
       && (!needle || e.note.toLowerCase().includes(needle) || (catById(e.categoryId)?.name ?? '').toLowerCase().includes(needle)));
     const total = rows.reduce((a, e) => a + e.amount, 0);
@@ -36,7 +39,7 @@ export function render({ query: q }) {
         h('ul', { class: 'entry-list' }, d.entries.map((e) => entryRow(e))))))
       : needle || cat
         ? emptyState('Nothing matches', needle && !scopeAll ? 'Try searching all months.' : 'Try another category or clear the filter.', null, 'search')
-        : emptyState(`No expenses in ${monthLabel(month)}`, 'Expenses you add show up here, by day.', h('a', { class: 'btn btn-primary', href: '#/add' }, icon('plus'), 'Add an expense'), 'list'));
+        : emptyState(`No expenses in ${per.kind === 'cycle' ? `the ${monthLabel(month)} cycle` : monthLabel(month)}`, 'Expenses you add show up here, by day.', h('a', { class: 'btn btn-primary', href: '#/add' }, icon('plus'), 'Add an expense'), 'list'));
     scopeBtn.hidden = !needle;
   };
 
@@ -47,7 +50,7 @@ export function render({ query: q }) {
   const scopeBtn = h('button', {
     class: 'chip chip-small', type: 'button', 'aria-pressed': String(allMonths),
     onclick: () => setQuery({ all: allMonths ? null : '1' }),
-  }, 'All months');
+  }, `All ${unitWord()}s`);
 
   const filters = h('div', { class: 'chips chips-scroll', role: 'group', 'aria-label': 'Filter by category' },
     h('button', { class: 'chip chip-small', type: 'button', 'aria-pressed': String(!cat), onclick: () => setQuery({ c: null }) }, 'All'),
@@ -57,7 +60,7 @@ export function render({ query: q }) {
 
   const page = h('div', { class: 'page history' },
     pageHead('History'),
-    monthNav(month, (m) => setQuery({ m })),
+    periodNav(per, (m) => setQuery({ m }), { maxKey: P.current().key }),
     h('div', { class: 'search-row' }, icon('search', 'ic search-ic'), search, scopeBtn),
     filters,
     cat ? h('p', { class: 'filter-note' }, badge(catById(cat), 'badge badge-small'), ` ${catById(cat).name} only`) : null,

@@ -9,6 +9,9 @@ import { install, promptInstall, installHelp, isStandalone, isIOS, checkForUpdat
 import { go, refresh } from '../router.js';
 import { pageHead } from './common.js';
 import { getThemePref, setThemePref } from '../theme.js';
+import { cycleMode, updatePeriodSettings, useCycles, useCalendarMonths, periods } from '../store.js';
+import { cyclePicker, migrationSheet, ordinalRule } from './cyclesui.js';
+import { longDate, isYmd as isDate } from '../dates.js';
 import { encryptBackup, isEncryptedBackup, decryptBackup, WrongPassphrase, passphraseProblem, pinProblem } from '../secure.js';
 import { LOCK_AFTER, lockEnabled, lockAfter, lockAfterLabel, enableLock, setLockAfter, disableLock, checkPin, showLock, loadLock } from '../lock.js';
 
@@ -237,6 +240,8 @@ export function render({ query }) {
       h('p', { class: 'muted small' }, 'Import shows what’s in the file and asks before replacing anything. Encrypted backups ask for their passphrase first.'),
       fileInput),
 
+    budgetPeriodCard(),
+
     h('section', { class: 'card', 'aria-labelledby': 'h-security' },
       h('h2', { id: 'h-security' }, 'Security'),
       h('div', { class: 'setting-row' },
@@ -300,4 +305,53 @@ export function render({ query }) {
   }
   if (state.entries.length) requestPersistence();
   return page;
+}
+
+/** Budget period: pay cycle (default) or calendar month, the salary-day rule, and holidays. */
+function budgetPeriodCard() {
+  const ps = state.periodSettings;
+  const cyc = cycleMode();
+  const per = periods().current();
+  const holidayIn = h('input', { class: 'input', type: 'date', id: 'holiday-date', 'aria-label': 'Holiday date' });
+  return h('section', { class: 'card', 'aria-labelledby': 'h-period' },
+    h('h2', { id: 'h-period' }, 'Budget period'),
+    h('div', { class: 'segmented seg2', role: 'radiogroup', 'aria-label': 'Budget period' },
+      h('button', {
+        class: 'seg', type: 'button', role: 'radio', id: 'period-cycle', 'aria-checked': String(cyc),
+        onclick: async () => {
+          if (cyc) return;
+          if (!state.cycles.length) { migrationSheet(); return; } // the first time: show what moves before applying
+          await useCycles();
+          refresh();
+          toast('Budgeting by pay cycle');
+        },
+      }, 'Pay cycle'),
+      h('button', {
+        class: 'seg', type: 'button', role: 'radio', id: 'period-month', 'aria-checked': String(!cyc),
+        onclick: async () => { if (!cyc) return; await useCalendarMonths(); refresh(); toast('Budgeting by calendar month, with your month budgets as they were'); },
+      }, 'Calendar month')),
+    cyc ? [
+      h('p', { class: 'muted small' }, `Each cycle starts on salary day, the ${ordinalRule()} working day (Mon–Fri) of the month, and ends the day before the next. This one: ${per.label.split(' ')[0]}, ${per.range}.`),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Salary day'),
+        h('select', {
+          class: 'input', id: 'nth-last', 'aria-label': 'Salary day',
+          onchange: async (e) => { await updatePeriodSettings({ nthLast: Number(e.target.value) }); refresh(); toast('Salary day updated. Past cycles keep their dates.'); },
+        }, [1, 2, 3, 4, 5].map((n) => h('option', { value: String(n), selected: ps.nthLast === n }, `${['', 'Last', 'Second-last', 'Third-last', 'Fourth-last', 'Fifth-last'][n]} working day`)))),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Holidays (skipped when finding salary day)'),
+        ps.holidays.length ? h('ul', { class: 'holiday-list', id: 'holiday-list' }, ps.holidays.map((d) => h('li', { class: 'plain-row' },
+          h('span', { class: 'grow' }, longDate(d)),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove holiday ${longDate(d)}`, onclick: async () => { await updatePeriodSettings({ holidays: ps.holidays.filter((x) => x !== d) }); refresh(); } }, icon('x'))))) : h('p', { class: 'muted small' }, 'None.'),
+        h('div', { class: 'field-row' }, holidayIn,
+          h('button', {
+            class: 'btn btn-small', type: 'button', id: 'holiday-add',
+            onclick: async () => {
+              if (!isDate(holidayIn.value)) { toast('Pick a date first'); return; }
+              await updatePeriodSettings({ holidays: [...new Set([...ps.holidays, holidayIn.value])].sort() });
+              refresh();
+              toast(`Holiday added: ${longDate(holidayIn.value)}. Past cycles keep their dates.`);
+            },
+          }, icon('plus'), 'Add'))),
+      h('button', { class: 'btn btn-wide', type: 'button', id: 'see-cycles', onclick: () => cyclePicker({ onPick: (k) => go(`#/history?m=${k}`) }) }, icon('calendar-clock'), 'See and edit cycles'),
+      h('p', { class: 'muted small' }, 'Changing the rule or holidays only affects expected dates. Cycles that have started keep their dates.'),
+    ] : h('p', { class: 'muted small' }, 'Budgets, totals and comparisons follow calendar months.'));
 }

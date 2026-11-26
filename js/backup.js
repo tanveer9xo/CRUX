@@ -4,6 +4,7 @@
 import { isPaise, isSignedPaise } from './money.js';
 import { BILL_TYPES, RECURRENCES } from './bills.js';
 import { withIcon } from './seed.js';
+import { validateCycles } from './cycles.js';
 import { hasIcon } from './icons.js';
 import { isYmd, isMonth } from './dates.js';
 import { APP_VERSION, SCHEMA_VERSION } from './version.js';
@@ -15,7 +16,7 @@ const MAX_TEXT = 200;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
-export function buildBackup({ categories, budgets, entries, goals = [], goalAdds = [], bills = [], income = [], incomeSources = [] }, now = new Date()) {
+export function buildBackup({ categories, budgets, entries, goals = [], goalAdds = [], bills = [], income = [], incomeSources = [], periodSettings, cycles = [], cycleBudgets = {} }, now = new Date()) {
   return {
     app: BACKUP_APP,
     schema: SCHEMA_VERSION,
@@ -29,6 +30,9 @@ export function buildBackup({ categories, budgets, entries, goals = [], goalAdds
     bills,
     income,
     incomeSources,
+    periodSettings: periodSettings ?? { mode: 'month', nthLast: 2, holidays: [] },
+    cycles,
+    cycleBudgets,
   };
 }
 
@@ -118,13 +122,25 @@ export function parseBackup(text) {
     ({ income, incomeSources } = r);
   }
 
+  // Pay cycles arrived with schema 4. An older backup imports in calendar-month mode, with no cycles.
+  const hasCycleData = raw.schema >= 4;
+  let periodSettings = { mode: 'month', nthLast: 2, holidays: [] };
+  let cycles = [];
+  let cycleBudgets = {};
+  if (hasCycleData) {
+    const r = parseCycleData(raw, catIds);
+    if (!r.ok) return r;
+    ({ periodSettings, cycles, cycleBudgets } = r);
+  }
+
   return {
     ok: true,
-    data: { categories, budgets, entries, goals, goalAdds, bills, income, incomeSources },
+    data: { categories, budgets, entries, goals, goalAdds, bills, income, incomeSources, periodSettings, cycles, cycleBudgets },
+    hasCycleData,
     hasGoalData,
     hasIncomeData,
     exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : null,
-    counts: { categories: categories.length, entries: entries.length, months: Object.keys(budgets).length, goals: goals.length, goalAdds: goalAdds.length, bills: bills.length, income: income.length, incomeSources: incomeSources.length },
+    counts: { categories: categories.length, entries: entries.length, months: Object.keys(budgets).length, goals: goals.length, goalAdds: goalAdds.length, bills: bills.length, income: income.length, incomeSources: incomeSources.length, cycles: cycles.length },
   };
 }
 
@@ -215,6 +231,30 @@ function parseGoalData(raw, catIds) {
     });
   }
   return { ok: true, goals, goalAdds, bills };
+}
+
+function parseCycleData(raw, catIds) {
+  const s = raw.periodSettings;
+  if (!s || !['cycle', 'month'].includes(s.mode) || !Number.isInteger(s.nthLast) || s.nthLast < 1 || s.nthLast > 10
+    || !Array.isArray(s.holidays) || s.holidays.length > 400 || !s.holidays.every(isYmd)) return bad('The budget period settings are damaged.');
+  if (!Array.isArray(raw.cycles) || !raw.cycleBudgets || typeof raw.cycleBudgets !== 'object' || Array.isArray(raw.cycleBudgets)) return bad('The backup is missing its pay cycles.');
+  const cycles = [];
+  for (const c of raw.cycles) {
+    if (!c || !isYmd(c.start) || !['rule', 'confirmed'].includes(c.source)) return bad('A pay cycle in the backup is damaged.');
+    cycles.push({ start: c.start, source: c.source });
+  }
+  const settings = { mode: s.mode, nthLast: s.nthLast, holidays: [...new Set(s.holidays)].sort() };
+  if (cycles.length && validateCycles(cycles, settings)) return bad('The pay cycles in the backup overlap or are damaged.');
+  const cycleBudgets = {};
+  for (const [key, plan] of Object.entries(raw.cycleBudgets)) {
+    if (!isMonth(key) || !plan || typeof plan !== 'object') return bad(`The cycle budget for ${key} is damaged.`);
+    cycleBudgets[key] = {};
+    for (const [id, paise] of Object.entries(plan)) {
+      if (!catIds.has(id) || !isPaise(paise)) return bad(`The cycle budget for ${key} is damaged.`);
+      cycleBudgets[key][id] = paise;
+    }
+  }
+  return { ok: true, periodSettings: settings, cycles, cycleBudgets };
 }
 
 function parseIncomeData(raw) {

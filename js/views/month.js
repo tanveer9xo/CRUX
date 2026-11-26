@@ -2,12 +2,13 @@
 // Allocating records goal entries in CRUX. It does not move real money.
 import { h, icon, sheet, toast, badge } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
-import { todayYmd, monthOf, isMonth, addMonths, monthLabel } from '../dates.js';
+import { todayYmd, isMonth } from '../dates.js';
 import { totalBudget } from '../budget.js';
 import { incomeForMonth, monthPlan, plannedGoalTotal, leftoverFor, plannedRemaining, prefillAllocation, checkAllocation } from '../income.js';
-import { state, planFor, saveGoalAdds, deleteGoalAdds } from '../store.js';
+import { state, planFor, saveGoalAdds, deleteGoalAdds, periods, cycleMode } from '../store.js';
 import { go, refresh, setQuery } from '../router.js';
-import { pageHead, monthNav } from './common.js';
+import { pageHead } from './common.js';
+import { periodNav, salarySheet, unitWord } from './cyclesui.js';
 
 export const name = 'month';
 export const tab = null;
@@ -15,25 +16,30 @@ export const title = 'Month plan';
 
 const money = (v, o) => formatINR(v, { decimals: 'auto', ...o });
 
-/** All the numbers for a month: the plan (against expected income) and the leftover (against what has arrived). */
-export function monthFigures(month, today) {
-  const inc = incomeForMonth(state.income, state.incomeSources, month, today);
-  const plan = monthPlan({ expected: inc.expected, received: inc.received, budgetTotal: totalBudget(planFor(month)), goalPlanTotal: plannedGoalTotal(state.goals) });
-  const lo = leftoverFor({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, month });
+/** All the numbers for a period: the plan (against expected income) and the leftover (against what has arrived). */
+export function monthFigures(period, today) {
+  const inc = incomeForMonth(state.income, state.incomeSources, period, today);
+  const plan = monthPlan({ expected: inc.expected, received: inc.received, budgetTotal: totalBudget(planFor(period.key)), goalPlanTotal: plannedGoalTotal(state.goals) });
+  const lo = leftoverFor({ income: state.income, entries: state.entries, goalAdds: state.goalAdds, period });
   return { inc, plan, lo };
 }
 
 export function render({ query }) {
   const today = todayYmd();
-  const current = monthOf(today);
-  const month = isMonth(query.get('m')) ? query.get('m') : current;
-  const { inc, plan: p, lo } = monthFigures(month, today);
+  const P = periods();
+  const cur = P.current();
+  const current = cur.key;
+  const per = isMonth(query.get('m')) ? P.byKey(query.get('m')) : cur;
+  const month = per.key;
+  const unit = unitWord();
+  const { inc, plan: p, lo } = monthFigures(per, today);
   const goalsPlanned = state.goals.filter((g) => !g.archived && g.monthlyPlan > 0);
   const canAllocate = month === current && lo.leftover > 0 && state.goals.some((g) => !g.archived);
 
   return h('div', { class: 'page month' },
     pageHead('Month plan'),
-    monthNav(month, (m) => setQuery({ m: m === current ? null : m }), { max: addMonths(current, 1) }),
+    periodNav(per, (m) => setQuery({ m: m === current ? null : m }), { maxKey: P.next(cur).key }),
+    cycleMode() && month === current ? h('button', { class: 'btn btn-wide', type: 'button', id: 'month-salary', onclick: salarySheet }, icon('banknote'), 'Salary received: start the next cycle') : null,
 
     h('section', { class: 'card plan-card', 'aria-labelledby': 'h-plan' },
       h('h2', { id: 'h-plan' }, 'The plan'),
@@ -45,7 +51,7 @@ export function render({ query }) {
       h('div', { class: `result ${p.over ? 'warn' : ''}`, id: 'unassigned' },
         p.over ? [icon('alert', 'ic ic-inline'), h('span', {}, 'Over-planned by '), h('strong', { class: 'num' }, money(p.overBy))]
           : [h('span', {}, 'Unassigned '), h('strong', { class: 'num' }, money(p.unassigned))]),
-      p.expected === 0 ? h('p', { class: 'muted small' }, 'No income yet for this month. Add it in Income to see what’s left to assign.') : null,
+      p.expected === 0 ? h('p', { class: 'muted small' }, `No income yet for this ${unit}. Add it in Income to see what’s left to assign.`) : null,
       p.over ? h('p', { class: 'muted small' }, 'Budgets and goal plans add up to more than the income you expect. Lower a budget or a goal’s monthly plan.') : null),
 
     h('section', { class: 'card plan-card', 'aria-labelledby': 'h-left' },
@@ -56,10 +62,10 @@ export function render({ query }) {
       h('div', { class: `result ${lo.leftover < 0 ? 'warn' : ''}`, id: 'leftover' },
         lo.leftover < 0 ? [icon('alert', 'ic ic-inline'), h('span', {}, 'Over by '), h('strong', { class: 'num' }, money(-lo.leftover))]
           : [h('span', {}, 'Leftover '), h('strong', { class: 'num' }, money(lo.leftover))]),
-      lo.leftover < 0 ? h('p', { class: 'muted small' }, 'You’ve spent and saved more than has come in so far this month.') : null,
+      lo.leftover < 0 ? h('p', { class: 'muted small' }, `You’ve spent and saved more than has come in so far this ${unit}.`) : null,
       month === current
         ? h('button', { class: 'btn btn-primary btn-big', type: 'button', id: 'allocate', disabled: !canAllocate, onclick: () => allocateSheet() }, icon('goals'), 'Allocate leftover')
-        : h('p', { class: 'muted small' }, 'You can allocate the leftover in the current month.'),
+        : h('p', { class: 'muted small' }, `You can allocate the leftover in the current ${unit}.`),
       month === current && !canAllocate ? h('p', { class: 'muted small' }, lo.leftover <= 0 ? 'Nothing to allocate: the leftover is ₹0 or below.' : 'Add a goal first.') : null,
       h('p', { class: 'muted small note-record' }, 'Allocating records goal entries in CRUX. It doesn’t move any real money: do that in your bank or investment app.')));
 }
@@ -72,7 +78,7 @@ function line(label, value, op, extra) {
 /** The allocate sheet: each active goal, in priority order, with an amount prefilled from its remaining plan. */
 export function allocateSheet() {
   const today = todayYmd();
-  const month = monthOf(today);
+  const month = periods().current(); // the current month or cycle
   const { lo } = monthFigures(month, today);
   const leftover = lo.leftover;
   const goals = state.goals.filter((g) => !g.archived).sort((a, b) => a.order - b.order);
@@ -94,7 +100,7 @@ export function allocateSheet() {
           h('span', { class: 'prio', 'aria-label': `Priority ${i + 1}` }, `#${i + 1}`),
           h('span', { class: 'alloc-name' }, badge(g, 'badge badge-small'), h('span', {}, g.name)),
           h('span', { class: 'alloc-amt' }, h('span', { class: 'rupee-sm', 'aria-hidden': 'true' }, '₹'), input)),
-        h('p', { class: 'muted small ind' }, g.monthlyPlan > 0 ? `Planned ${money(g.monthlyPlan)} a month · ${money(left)} still to plan this month` : 'No monthly plan: enter any amount'),
+        h('p', { class: 'muted small ind' }, g.monthlyPlan > 0 ? `Planned ${money(g.monthlyPlan)} a ${unitWord()} · ${money(left)} still to plan this ${unitWord()}` : 'No monthly plan: enter any amount'),
         bucket) };
     });
 
@@ -126,7 +132,7 @@ export function allocateSheet() {
 
     update();
     return h('form', { class: 'sheet-body', novalidate: true, onsubmit: (e) => { e.preventDefault(); save(); } },
-      h('div', { class: 'alloc-head' }, h('p', { class: 'muted small' }, 'Leftover this month'), h('p', { class: 'hero-amt num', id: 'alloc-leftover' }, money(leftover))),
+      h('div', { class: 'alloc-head' }, h('p', { class: 'muted small' }, `Leftover this ${unitWord()}`), h('p', { class: 'hero-amt num', id: 'alloc-leftover' }, money(leftover))),
       h('p', { class: 'note-record muted small', id: 'alloc-note' }, 'This records the allocation as goal entries in CRUX. It does not move any real money.'),
       goals.length ? h('ul', { class: 'alloc-list' }, rows.map((r) => r.node)) : h('p', { class: 'muted' }, 'Add a goal first.'),
       summary,

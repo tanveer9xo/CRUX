@@ -7,7 +7,7 @@
 import { monthOf, daysBetween, firstDay, lastDay, sameDayLastMonth, monthsEnding } from './dates.js';
 import { advanceDue } from './bills.js';
 import { monthSpend, spendBetween } from './insights.js';
-import { monthNet } from './goals.js';
+import { monthNet, rangeOf } from './goals.js';
 
 export const INCOME_WARN_DAYS = 5; // a recurring income shows on Home this many days before it is expected
 
@@ -15,21 +15,21 @@ const sum = (list) => list.reduce((a, x) => a + x.amount, 0);
 
 // ---------- received / expected ----------
 export const receivedBetween = (income, from, to) => sum(income.filter((i) => i.date >= from && i.date <= to));
-export const receivedIn = (income, month) => receivedBetween(income, firstDay(month), lastDay(month));
+export const receivedIn = (income, period) => { const r = rangeOf(period); return receivedBetween(income, r.from, r.to); };
 
 /** Net money put into goals between two days (withdrawals reduce it). */
 export const goalNetBetween = (goalAdds, from, to) => sum(goalAdds.filter((a) => a.date >= from && a.date <= to));
-export const goalNetIn = (goalAdds, month) => goalNetBetween(goalAdds, firstDay(month), lastDay(month));
+export const goalNetIn = (goalAdds, period) => { const r = rangeOf(period); return goalNetBetween(goalAdds, r.from, r.to); };
 
 /**
  * Recurring sources still expected in a month: for the current month, those whose next expected date is this month or
  * earlier (not yet confirmed, or late); for a future month, every active source; none for a past month (what
  * arrived is in the entries). Only sources with an amount count towards expected income.
  */
-export function pendingSources(sources, month, today) {
-  const current = monthOf(today);
-  if (month < current) return [];
-  return sources.filter((s) => !s.archived && s.amount > 0 && (month > current || monthOf(s.nextDate) <= month));
+export function pendingSources(sources, period, today) {
+  const r = rangeOf(period);
+  if (r.to < today) return []; // a past month or cycle: only what arrived counts
+  return sources.filter((s) => !s.archived && s.amount > 0 && (r.from > today || s.nextDate <= r.to));
 }
 
 /** { received, pending, expected }: expected = received so far + what recurring sources still promise this month. */
@@ -77,10 +77,11 @@ export const plannedGoalTotal = (goals) => goals.filter((g) => !g.archived && g.
 
 // ---------- leftover and allocation ----------
 /** Received − expenses logged − goal adds made, for a month. Can be negative. */
-export function leftoverFor({ income, entries, goalAdds, month }) {
-  const received = receivedIn(income, month);
-  const spent = monthSpend(entries, month).total;
-  const saved = goalNetIn(goalAdds, month);
+export function leftoverFor({ income, entries, goalAdds, month, period = month }) {
+  const r = rangeOf(period);
+  const received = receivedIn(income, r);
+  const spent = spendBetween(entries, r.from, r.to).total;
+  const saved = goalNetIn(goalAdds, r);
   return { received, spent, saved, leftover: received - spent - saved };
 }
 
@@ -120,26 +121,40 @@ export function savingsRate(saved, received) {
 export const ratePoints = (cur, prev) => (cur === null || prev === null ? null : cur - prev);
 
 /** Income, spending, saving and savings rate per month for the n months ending at endMonth (oldest first). */
-export function incomeTrend({ income, entries, goalAdds, endMonth, n = 6 }) {
-  const months = monthsEnding(endMonth, n);
-  const rows = months.map((m) => {
-    const received = receivedIn(income, m);
-    const spent = monthSpend(entries, m).total;
-    const saved = goalNetIn(goalAdds, m);
-    return { month: m, income: received, spent, saved, rate: savingsRate(saved, received) };
+export function incomeTrend({ income, entries, goalAdds, endMonth, n = 6, periods }) {
+  const list = periods ?? monthsEnding(endMonth, n).map((m) => ({ key: m, ...rangeOf(m) }));
+  const months = list.map((p) => p.key);
+  const rows = list.map((p) => {
+    const received = receivedIn(income, p);
+    const spent = spendBetween(entries, p.from, p.to).total;
+    const saved = goalNetIn(goalAdds, p);
+    return { month: p.key, period: p, income: received, spent, saved, rate: savingsRate(saved, received) };
   });
   return { months, rows, income: rows.map((r) => r.income), spent: rows.map((r) => r.spent), saved: rows.map((r) => r.saved), rate: rows.map((r) => r.rate) };
 }
 
 /** This month so far against the same days last month: income, spending, saved and savings rate. */
-export function savingsMtd({ income, entries, goalAdds, today }) {
+export function savingsMtd({ income, entries, goalAdds, today, window }) {
+  if (window) return savingsWindows({ income, entries, goalAdds, current: window.current, previous: window.previous });
   const prevTo = sameDayLastMonth(today);
-  const window = (from, to) => {
+  const win = (from, to) => {
     const received = receivedBetween(income, from, to);
     const saved = goalNetBetween(goalAdds, from, to);
     return { from, to, income: received, spent: spendBetween(entries, from, to).total, saved, rate: savingsRate(saved, received) };
   };
-  const current = window(firstDay(monthOf(today)), today);
-  const previous = window(firstDay(monthOf(prevTo)), prevTo);
+  const current = win(firstDay(monthOf(today)), today);
+  const previous = win(firstDay(monthOf(prevTo)), prevTo);
   return { current, previous, points: ratePoints(current.rate, previous.rate) };
+}
+
+/** Savings rate for two windows (this period to date, and the same days of the previous one). */
+export function savingsWindows({ income, entries, goalAdds, current, previous }) {
+  const w = ({ from, to }) => {
+    const received = receivedBetween(income, from, to);
+    const saved = goalNetBetween(goalAdds, from, to);
+    return { from, to, income: received, spent: spendBetween(entries, from, to).total, saved, rate: savingsRate(saved, received) };
+  };
+  const c = w(current);
+  const p = w(previous);
+  return { current: c, previous: p, points: ratePoints(c.rate, p.rate) };
 }

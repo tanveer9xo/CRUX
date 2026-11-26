@@ -6,7 +6,8 @@ import {
   BILL_TYPES, RECURRENCES, DEFAULT_WARN_DAYS, defaultLogExpense, typeInfo, recurrenceInfo, billStatus, dueText, byDue, endedReason, ARCHIVE_REASONS,
   resolveSchedule, lastDayOfMonth,
 } from '../bills.js';
-import { state, saveBill, activeCategories, catById, restoreBill } from '../store.js';
+import { state, saveBill, activeCategories, catById, restoreBill, periods } from '../store.js';
+import { unitWord } from './cyclesui.js';
 import { refresh } from '../router.js';
 import { pageHead, emptyState } from './common.js';
 import { billRow, payBill, skipBillOnce } from './billflow.js';
@@ -25,6 +26,7 @@ export function render() {
   return h('div', { class: 'page bills' },
     pageHead('Bills'),
     h('p', { class: 'muted small lede' }, 'Reminders live in the app only. Open CRUX to see what’s due; nothing is sent to you.'),
+    dueThisPeriod(today),
     active.length
       ? GROUPS.map(([k, label]) => (by(k).length ? h('section', { class: `bill-group g-${k}`, 'aria-label': label },
         h('h2', {}, label, h('span', { class: 'count' }, ` ${by(k).length}`)),
@@ -181,4 +183,17 @@ export function billForm(bill, { restoring = false } = {}) {
       err,
       h('button', { class: 'btn btn-primary btn-big', type: 'submit', id: 'bill-save' }, bill ? 'Save' : 'Add'));
   });
+}
+
+/** "Due this cycle (27 Nov – 29 Dec): 3 bills, about ₹12,000". Due dates stay calendar dates. */
+function dueThisPeriod(today) {
+  const per = periods().current();
+  const due = state.bills.filter((b) => !b.archived && b.dueDate >= per.from && b.dueDate <= per.to);
+  if (!due.length) return null;
+  const known = due.filter((b) => b.amount > 0).reduce((a, b) => a + b.amount, 0);
+  const left = due.filter((b) => b.dueDate >= today).length;
+  return h('section', { class: 'card due-period', id: 'due-period' },
+    h('p', { class: 'muted small' }, `Due this ${unitWord()} · ${per.kind === 'cycle' ? per.range : per.label}`),
+    h('p', {}, h('strong', { class: 'num' }, `${due.length} bill${due.length === 1 ? '' : 's'}`), known ? [' · about ', h('strong', { class: 'num' }, formatINR(known, { decimals: 'never' }))] : null,
+      h('span', { class: 'muted' }, ` · ${left} still to come`)));
 }

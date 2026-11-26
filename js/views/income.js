@@ -6,10 +6,11 @@ import { todayYmd, monthOf, isYmd, isMonth, dayLabel, longDate } from '../dates.
 import { resolveSchedule, lastDayOfMonth } from '../bills.js';
 import { incomeForMonth, sourceStatus } from '../income.js';
 import {
-  state, saveIncome, deleteIncome, restoreIncome, saveSource, receiveSource, undoReceive, skipSource, sourceById,
+  state, saveIncome, deleteIncome, restoreIncome, saveSource, receiveSource, undoReceive, skipSource, sourceById, periods, cycleMode,
 } from '../store.js';
 import { refresh, setQuery } from '../router.js';
-import { pageHead, monthNav, emptyState } from './common.js';
+import { pageHead, emptyState } from './common.js';
+import { periodNav, unitWord } from './cyclesui.js';
 
 export const name = 'income';
 export const tab = null;
@@ -22,19 +23,22 @@ const ordinal = (n) => { const v = n % 100; const sfx = ['th', 'st', 'nd', 'rd']
 
 export function render({ query }) {
   const today = todayYmd();
-  const current = monthOf(today);
-  const month = isMonth(query.get('m')) && query.get('m') <= current ? query.get('m') : current;
-  const inc = incomeForMonth(state.income, state.incomeSources, month, today);
-  const entries = state.income.filter((e) => monthOf(e.date) === month);
+  const P = periods();
+  const current = P.current().key;
+  const per = isMonth(query.get('m')) && query.get('m') <= current ? P.byKey(query.get('m')) : P.current();
+  const month = per.key;
+  const unit = unitWord();
+  const inc = incomeForMonth(state.income, state.incomeSources, per, today);
+  const entries = state.income.filter((e) => e.date >= per.from && e.date <= per.to);
   const sources = state.incomeSources.filter((s) => !s.archived);
   const archived = state.incomeSources.filter((s) => s.archived);
   return h('div', { class: 'page income' },
     pageHead('Income'),
-    monthNav(month, (m) => setQuery({ m: m === current ? null : m }), { max: current }),
+    periodNav(per, (m) => setQuery({ m: m === current ? null : m }), { maxKey: current }),
     h('section', { class: 'card' },
       h('p', { class: 'muted small' }, 'Received'),
       h('p', { class: 'hero-amt num', id: 'income-received' }, money(inc.received)),
-      month === current && inc.pending > 0 ? h('p', { class: 'muted' }, 'Expected this month: ', h('span', { class: 'num strong' }, money(inc.expected)), ` (${money(inc.pending)} still to come)`) : null,
+      month === current && inc.pending > 0 ? h('p', { class: 'muted' }, `Expected this ${unit}: `, h('span', { class: 'num strong' }, money(inc.expected)), ` (${money(inc.pending)} still to come)`) : null,
       h('p', { class: 'muted small' }, 'Income is kept apart from spending: it never counts as an expense or a goal entry.')),
     h('button', { class: 'btn btn-primary btn-big', type: 'button', id: 'add-income', onclick: () => incomeSheet(null) }, icon('plus'), 'Add income'),
 
@@ -42,7 +46,7 @@ export function render({ query }) {
     sources.length ? h('ul', { class: 'bill-list' }, sources.map((s) => sourceRow(s, today))) : h('p', { class: 'muted' }, 'Set up your salary once and CRUX will ask you to confirm it each month.'),
     h('button', { class: 'btn btn-wide', type: 'button', id: 'new-source', onclick: () => sourceForm(null) }, icon('plus'), 'Set up recurring income'),
 
-    h('h2', {}, `Received this month (${entries.length})`),
+    h('h2', {}, `Received this ${unit} (${entries.length})`),
     entries.length ? h('ul', { class: 'entry-list' }, entries.map((e) => h('li', {},
       h('button', { class: 'entry', type: 'button', onclick: () => incomeSheet(e), 'aria-label': `${e.source}, ${money(e.amount)}, ${dayLabel(e.date)}. Edit` },
         badge(INCOME),
@@ -150,7 +154,9 @@ function sourceForm(src) {
     const noteIn = h('input', { class: 'input', id: 'src-note', maxlength: '200', value: src?.note ?? '', placeholder: 'Optional', enterkeyhint: 'done' });
     const lastBox = h('div', {});
     const lastIn = h('input', { type: 'checkbox', id: 'src-lastday', checked: lastDay, onchange: () => { lastDay = lastIn.checked; if (lastDay && isYmd(dateIn.value)) dateIn.value = lastDayOfMonth(dateIn.value); draw(); } });
-    const draw = () => lastBox.replaceChildren(h('label', { class: 'toggle' }, lastIn, h('span', {}, h('strong', {}, 'Last day of the month'), h('br', {}),
+    const cycleIn = h('input', { type: 'checkbox', id: 'src-cycle', checked: src ? !!src.startsCycle : /salary/i.test(nameIn.value) });
+    const draw = () => lastBox.replaceChildren(cycleMode() ? h('label', { class: 'toggle' }, cycleIn, h('span', {}, h('strong', {}, 'This is my salary: it starts a new pay cycle'), h('br', {}),
+      h('span', { class: 'muted small' }, 'It is then expected on each cycle’s start, and confirming it can start the next cycle.'))) : null, h('label', { class: 'toggle' }, lastIn, h('span', {}, h('strong', {}, 'Last day of the month'), h('br', {}),
       h('span', { class: 'muted small' }, lastDay ? 'Expected on the 28th–31st, whichever is the month’s last day.' : 'Otherwise the same day each month; in shorter months it falls on the last day.'))));
     draw();
     const field = (label, input, hint) => h('label', { class: 'field' }, h('span', { class: 'field-label' }, label), input, hint ? h('span', { class: 'muted small' }, hint) : null);
@@ -163,7 +169,8 @@ function sourceForm(src) {
       const amount = amountIn.value.trim() === '' ? null : parseAmount(amountIn.value);
       if (amountIn.value.trim() !== '' && amount === null) { err.textContent = 'The amount isn’t valid.'; return; }
       const sched = resolveSchedule({ dueDate: dateIn.value, lastDay, previous: src ? { ...src, dueDate: src.nextDate } : null });
-      await saveSource({ ...src, name: nm, amount, nextDate: sched.dueDate, anchorDay: sched.anchorDay, lastDay: sched.lastDay, note: noteIn.value.trim().slice(0, 200), archived: src?.archived ?? false });
+      const startsCycle = cycleMode() ? cycleIn.checked : !!src?.startsCycle;
+      await saveSource({ ...src, name: nm, amount, nextDate: sched.dueDate, anchorDay: sched.anchorDay, lastDay: sched.lastDay, startsCycle, note: noteIn.value.trim().slice(0, 200), archived: src?.archived ?? false });
       close();
       refresh();
       toast(src ? 'Recurring income updated' : `${nm} set up`);

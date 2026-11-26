@@ -9,6 +9,8 @@ import { SEED_CATEGORIES, SEED_BUDGET, COLORS, SEED_GOALS, withIcon } from './se
 import { hasIcon } from './icons.js';
 import { markPaid as billMarkPaid, skipOne as billSkipOne, sweepEnded } from './bills.js';
 import { receiveIncome, skipSource as skipIncomeSource } from './income.js';
+import { DEFAULT_PERIOD_SETTINGS, ensureCycles, confirmStart, editStart, buildCycles, movedEntries } from './cycles.js';
+import { makePeriods, migrationSummary } from './periods.js';
 
 export const state = {
   categories: [], // sorted by order
@@ -21,6 +23,9 @@ export const state = {
   incomeSources: [], // recurring monthly income (e.g. Salary); archived ones included
   lastExport: undefined, // ms
   prefill: null, // set by "Mark paid" for the Add screen to pick up once
+  periodSettings: { ...DEFAULT_PERIOD_SETTINGS }, // { mode: 'cycle' | 'month', nthLast, holidays, migrationPending }
+  cycles: [], // stored pay-cycle starts [{ start, source }]
+  cycleBudgets: {}, // pay-cycle budgets by cycle name; state.budgets keeps the calendar-month ones
 };
 
 export { COLORS };
@@ -42,7 +47,9 @@ export const activeCategories = () => state.categories.filter((c) => !c.archived
 export const currentMonth = () => monthOf(todayYmd());
 
 export async function init() {
-  const [categories, budgetRows, entries, goals, goalAdds, bills, income, incomeSources] = await Promise.all(['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources'].map((s) => db.getAll(s)));
+  const [categories, budgetRows, entries, goals, goalAdds, bills, income, incomeSources, cycles, cycleBudgetRows] = await Promise.all(['categories', 'budgets', 'entries', 'goals', 'goalAdds', 'bills', 'income', 'incomeSources', 'cycles', 'cycleBudgets'].map((s) => db.getAll(s)));
+  state.cycles = cycles;
+  state.cycleBudgets = Object.fromEntries(cycleBudgetRows.map((r) => [r.key, r.plan]));
   state.categories = categories;
   state.income = income;
   state.incomeSources = incomeSources;
@@ -58,7 +65,16 @@ export async function init() {
   sortAdds();
   sortIncome();
   await migrateIcons();
-  if (!categories.length && !(await db.getMeta('seeded'))) await seed();
+  const fresh = !categories.length && !(await db.getMeta('seeded'));
+  if (fresh) await seed();
+  // Budget period: new installs start on pay cycles; an existing install stays on calendar months until it has seen
+  // the one-time migration summary and chosen (Home and Settings offer it).
+  const ps = await db.getMeta('periodSettings');
+  if (ps) state.periodSettings = { ...DEFAULT_PERIOD_SETTINGS, ...ps };
+  else {
+    state.periodSettings = fresh ? { ...DEFAULT_PERIOD_SETTINGS } : { ...DEFAULT_PERIOD_SETTINGS, mode: 'month', migrationPending: true };
+    await db.setMeta('periodSettings', state.periodSettings);
+  }
   // Goals are seeded once per device, including on an upgrade from 1.0.x (which only adds them; nothing is removed).
   if (!(await db.getMeta('goalsSeeded'))) await seedGoals();
   await ensureCurrentMonth();
@@ -110,16 +126,108 @@ async function seed() {
 }
 
 /** Month rollover: give the current month its own copy of the plan, so later edits can't change the past. */
+// ---- budget periods (calendar months or pay cycles) ----
+export const cycleMode = () => state.periodSettings.mode === 'cycle' && state.cycles.length > 0;
+
+/** The period API for today (js/periods.js): current(), prev(p), next(p), toDate(p), daysLeft(p), byKey(key)… */
+export const periods = (today = todayYmd()) => makePeriods({ mode: cycleMode() ? 'cycle' : 'month', settings: state.periodSettings, records: state.cycles, today });
+export const currentPeriod = () => periods().current();
+
+const activeBudgets = () => (cycleMode() ? state.cycleBudgets : state.budgets);
+const earliestDate = () => [...state.entries, ...state.income, ...state.goalAdds].reduce((m, x) => (x.date < m ? x.date : m), todayYmd());
+
+async function saveCycles(records) {
+  const keep = new Set(records.map((r) => r.start));
+  const ops = [...state.cycles.filter((c) => !keep.has(c.start)).map((c) => ({ store: 'cycles', del: c.start })), ...records.map((r) => ({ store: 'cycles', put: r }))];
+  if (ops.length) await db.write(ops);
+  state.cycles = records;
+}
+
+/**
+ * Rollover for the current period: in cycle mode, add the rule's cycles up to today (and back to the earliest data),
+ * then give the current period its own copy of the budgets so later edits can't change the past.
+ */
 export async function ensureCurrentMonth() {
-  const month = currentMonth();
-  const r = rollover(state.budgets, month);
+  if (state.periodSettings.mode === 'cycle') {
+    const r = ensureCycles(state.cycles, state.periodSettings, todayYmd(), earliestDate());
+    if (r.added.length) await saveCycles(r.records);
+  }
+  const key = currentPeriod().key;
+  if (cycleMode()) {
+    if (!Object.keys(state.cycleBudgets).length && Object.keys(state.budgets).length) await copyCalendarBudgets();
+    const r = rollover(state.cycleBudgets, key);
+    if (!r.created) return false;
+    await db.put('cycleBudgets', { key, plan: r.budgets[key] });
+    state.cycleBudgets = r.budgets;
+    return true;
+  }
+  const r = rollover(state.budgets, key);
   if (!r.created) return false;
-  await db.put('budgets', { month, plan: r.budgets[month] });
+  await db.put('budgets', { month: key, plan: r.budgets[key] });
   state.budgets = r.budgets;
   return true;
 }
 
-export const planFor = (month) => budgetsFor(state.budgets, month);
+/** The plan for a period key (a month, or a cycle's name month). */
+export const planFor = (key) => budgetsFor(activeBudgets(), key);
+
+/** "Salary received" / "Start new cycle now": the next cycle starts on `date` (confirmed). Returns an error or null. */
+export async function startCycle(date) {
+  const r = confirmStart(state.cycles, date, state.periodSettings);
+  if (r.error) return r.error;
+  await saveCycles(r.records);
+  await ensureCurrentMonth();
+  return null;
+}
+
+/** Preview of moving a cycle start: { error, moved: [{ entry, from, to }] } without changing anything. */
+export function previewCycleEdit(from, to) {
+  const r = editStart(state.cycles, from, to, state.periodSettings);
+  if (r.error) return { error: r.error, moved: [] };
+  return { error: null, moved: movedEntries(state.entries, buildCycles(state.cycles, state.periodSettings), buildCycles(r.records, state.periodSettings)) };
+}
+
+export async function editCycle(from, to) {
+  const r = editStart(state.cycles, from, to, state.periodSettings);
+  if (r.error) return r.error;
+  await saveCycles(r.records);
+  await ensureCurrentMonth();
+  return null;
+}
+
+/** Change the rule (Nth-last working day, holidays). Past cycles keep their stored starts. */
+export async function updatePeriodSettings(patch) {
+  state.periodSettings = { ...state.periodSettings, ...patch };
+  await db.setMeta('periodSettings', state.periodSettings);
+  await ensureCurrentMonth();
+}
+
+/** What switching to pay cycles would do (shown before it is applied). */
+export const cycleMigrationPreview = () => migrationSummary({ budgets: state.budgets, entries: state.entries, income: state.income, goalAdds: state.goalAdds, settings: state.periodSettings, today: todayYmd() });
+
+/**
+ * Switch to pay cycles. The first time: create cycles from the earliest data by the rule and copy each calendar
+ * month's budgets onto the cycle of the same name (the calendar budgets stay in "budgets", so switching back restores
+ * them). Later switches reuse the stored cycles and cycle budgets.
+ */
+export async function useCycles() {
+  if (!state.cycles.length) {
+    const r = ensureCycles([], state.periodSettings, todayYmd(), earliestDate());
+    await saveCycles(r.records);
+  }
+  if (!Object.keys(state.cycleBudgets).length) await copyCalendarBudgets();
+  await updatePeriodSettings({ mode: 'cycle', migrationPending: false });
+}
+
+/** Each calendar month's budgets onto the cycle with the same name; later cycles carry the last one forward. */
+async function copyCalendarBudgets() {
+  const copy = Object.fromEntries(Object.entries(state.budgets).map(([k, plan]) => [k, { ...plan }]));
+  if (Object.keys(copy).length) await db.write(Object.entries(copy).map(([key, plan]) => ({ store: 'cycleBudgets', put: { key, plan } })));
+  state.cycleBudgets = copy;
+}
+
+/** Switch to calendar months: today's behaviour exactly, with the calendar-month budgets as they were. */
+export const useCalendarMonths = () => updatePeriodSettings({ mode: 'month', migrationPending: false });
 
 // ---- entries ----
 export async function saveEntry({ id, amount, categoryId, date, note }) {
@@ -148,13 +256,15 @@ export async function restoreEntry(entry) {
 
 // ---- plan ----
 async function commitBudgets(next, changedFrom) {
-  const ops = Object.keys(next).filter((m) => m >= changedFrom).map((month) => ({ store: 'budgets', put: { month, plan: next[month] } }));
+  const cyc = cycleMode();
+  const ops = Object.keys(next).filter((m) => m >= changedFrom).map((k) => (cyc ? { store: 'cycleBudgets', put: { key: k, plan: next[k] } } : { store: 'budgets', put: { month: k, plan: next[k] } }));
   await db.write(ops);
-  state.budgets = next;
+  if (cyc) state.cycleBudgets = next;
+  else state.budgets = next;
 }
 
-/** Set a category's budget from `month` onward; earlier months keep theirs. */
-export const setBudget = (month, categoryId, paise) => commitBudgets(setBudgetPure(state.budgets, month, categoryId, paise), month);
+/** Set a category's budget from this period (month or cycle) onward; earlier periods keep theirs. */
+export const setBudget = (key, categoryId, paise) => commitBudgets(setBudgetPure(activeBudgets(), key, categoryId, paise), key);
 
 export async function addCategory({ name, icon, color, budget }, month) {
   const cat = { id: uid(), name, icon: icon ?? 'tag', emoji: '', color, order: Math.max(-1, ...state.categories.map((c) => c.order)) + 1, archived: false, createdAt: Date.now() };
@@ -194,8 +304,9 @@ export async function archiveCategory(id, month) {
 
 /** Bring an archived category back into the plan from `month`, with its last known budget. */
 export async function restoreCategory(id, month) {
-  const months = Object.keys(state.budgets).sort().reverse();
-  const last = months.map((m) => state.budgets[m][id]).find((v) => v !== undefined) ?? 0;
+  const map = activeBudgets();
+  const months = Object.keys(map).sort().reverse();
+  const last = months.map((m) => map[m][id]).find((v) => v !== undefined) ?? 0;
   await updateCategory(id, { archived: false, order: Math.max(...state.categories.map((c) => c.order)) + 1 });
   await setBudget(month, id, last);
 }
@@ -296,9 +407,11 @@ export async function saveSource(src) {
 }
 
 /** Confirm a recurring income received (see income.js): logs the entry and moves the source on, in one transaction. */
-export async function receiveSource(id, { amount } = {}) {
+export async function receiveSource(id, { amount, date } = {}) {
   const before = sourceById(id);
-  const r = receiveIncome(before, { today: todayYmd(), amount });
+  const r = receiveIncome(before, { today: date ?? todayYmd(), amount });
+  // In pay-cycle mode a salary is expected on the next cycle's start, not on a fixed day of the month.
+  if (before.startsCycle && cycleMode()) r.source.nextDate = periods().next(periods().current()).from;
   const entry = { ...r.entry, id: uid(), createdAt: Date.now() };
   await db.write([{ store: 'incomeSources', put: r.source }, { store: 'income', put: entry }]);
   state.incomeSources = upsert(state.incomeSources, r.source);
@@ -374,6 +487,9 @@ export function exportData(now = new Date()) {
     bills: state.bills,
     income: [...state.income].sort(byDate),
     incomeSources: state.incomeSources,
+    periodSettings: { mode: state.periodSettings.mode, nthLast: state.periodSettings.nthLast, holidays: state.periodSettings.holidays },
+    cycles: state.cycles,
+    cycleBudgets: state.cycleBudgets,
   }, now);
 }
 
@@ -404,6 +520,11 @@ export async function importData(data, { keepGoalData = false, keepIncomeData = 
     state.income = [...data.income];
     state.incomeSources = [...data.incomeSources];
   }
+  // Cycles come with the file (none in an older backup, which then opens in calendar-month mode).
+  state.cycles = [...(data.cycles ?? [])];
+  state.cycleBudgets = { ...(data.cycleBudgets ?? {}) };
+  state.periodSettings = { ...DEFAULT_PERIOD_SETTINGS, ...(data.periodSettings ?? { mode: 'month' }), migrationPending: false };
+  await db.setMeta('periodSettings', state.periodSettings);
   sortCats();
   sortEntries();
   sortGoals();
@@ -429,7 +550,8 @@ export async function resetToStarter() {
   const { now, cats, plan } = starterData(month);
   const goals = starterGoals(now);
   const appLock = await db.getMeta('appLock'); // a device setting, not data: the lock stays on after a reset
-  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: now, goalsSeeded: now, ...(appLock ? { appLock } : {}) }, { clearMeta: true });
+  const periodSettings = { ...state.periodSettings, migrationPending: false }; // also a preference: kept
+  await db.replaceAll({ categories: cats, budgets: { [month]: plan }, entries: [], goals, goalAdds: [], bills: [], income: [], incomeSources: [] }, { seeded: now, goalsSeeded: now, periodSettings, ...(appLock ? { appLock } : {}) }, { clearMeta: true });
   clearCruxLocalStorage();
   state.categories = cats;
   state.budgets = { [month]: plan };
@@ -439,7 +561,11 @@ export async function resetToStarter() {
   state.bills = [];
   state.income = [];
   state.incomeSources = [];
+  state.cycles = [];
+  state.cycleBudgets = {};
+  state.periodSettings = periodSettings;
   state.lastExport = undefined;
+  await ensureCurrentMonth(); // fresh cycles from today (in cycle mode) and the current period's budgets
 }
 
 export async function eraseAll() {
@@ -452,5 +578,7 @@ export async function eraseAll() {
   state.bills = [];
   state.income = [];
   state.incomeSources = [];
+  state.cycles = [];
+  state.cycleBudgets = {};
   state.lastExport = null;
 }

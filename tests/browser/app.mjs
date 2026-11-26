@@ -159,6 +159,17 @@ check(new Set(cats.map((c) => c.icon)).size === 18 && new Set(cats.map((c) => c.
 const seededPlan = (await idb('budgets'))[0]?.plan ?? {};
 check(Object.keys(seededPlan).length === 18 && Object.values(seededPlan).every((v) => v === 0), 'every seeded budget is ₹0');
 check((await idb('entries')).length === 0, 'no sample entries are seeded');
+// A new install budgets by pay cycle. The long scenario below checks calendar months first (pay cycles get their own
+// section later), so switch through Settings the way a person would.
+check((await idb('meta')).find((m) => m.key === 'periodSettings')?.value.mode === 'cycle' && (await idb('cycles')).length >= 1, 'a new install budgets by pay cycle, with its first cycle created');
+check(!!(await ev(`document.getElementById('home-range')?.textContent`)), 'Home shows the cycle’s dates under its name');
+await ev(`location.hash = '#/settings'; true`);
+await sleep(500);
+await ev(`document.getElementById('period-month').click(); true`);
+await sleep(500);
+check((await idb('meta')).find((m) => m.key === 'periodSettings')?.value.mode === 'month', 'Settings → Budget period → Calendar month switches back');
+await ev(`location.hash = '#/'; true`);
+await sleep(500);
 await shot('01-home-empty');
 
 // ---- manifest + install criteria ----
@@ -746,7 +757,7 @@ check(backup.app === 'crux' && backup.entries.length === count && backup.entries
 const gN = (await idb('goals')).length;
 const aN = (await idb('goalAdds')).length;
 const bN = (await idb('bills')).length;
-check(backup.schema === 3 && backup.goals.length === gN && backup.goalAdds.length === aN && backup.bills.length === bN && gN >= 3 && aN >= 3 && bN >= 3, `the backup also holds ${gN} goals, ${aN} goal entries and ${bN} bills (schema 3)`);
+check(backup.schema === 4 && backup.goals.length === gN && backup.goalAdds.length === aN && backup.bills.length === bN && gN >= 3 && aN >= 3 && bN >= 3, `the backup also holds ${gN} goals, ${aN} goal entries and ${bN} bills (schema 4)`);
 const iN = (await idb('income')).length;
 const sN = (await idb('incomeSources')).length;
 check(backup.income.length === iN && backup.incomeSources.length === sN && iN >= 2 && sN >= 1 && backup.income.every((e) => Number.isInteger(e.amount) && e.amount > 0), `the backup holds ${iN} income entries and ${sN} recurring income source(s), as integer paise`);
@@ -946,6 +957,92 @@ await click('#pin-save');
 await sleep(1200);
 check((await text('#lock-state')) === 'Off' && !(await idb('meta')).find((m) => m.key === 'appLock')?.value, 'app lock is off and its hash is gone');
 
+// ---- pay cycles ----
+const pageDates = (expr) => ev(`Promise.all([import('./js/store.js'), import('./js/dates.js')]).then(([s, d]) => (${expr}))`);
+const calBudgetsBefore = norm(await idb('budgets'));
+await nav('#/settings');
+await click('#period-cycle');
+await sleep(600);
+// The older backups imported above carried no cycles, so the switch shows the migration summary first.
+check(!!(await ev(`!!document.getElementById('migration')`)), 'switching to Pay cycle with no cycles yet shows the migration summary first');
+await click('#migration-apply');
+await sleep(700);
+check((await idb('meta')).find((m) => m.key === 'periodSettings')?.value.mode === 'cycle' && (await idb('cycles')).length >= 1, 'Settings → Budget period → Pay cycle switches to cycles');
+await shot('40-settings-period');
+// Salary day rule and holidays.
+await setVal('#nth-last', '1');
+await sleep(400);
+check((await idb('meta')).find((m) => m.key === 'periodSettings').value.nthLast === 1, 'the salary day can be the last working day');
+await setVal('#nth-last', '2');
+await sleep(400);
+const holiday = await pageDates(`d.addDays(d.todayYmd(), 40)`);
+await setVal('#holiday-date', holiday);
+await click('#holiday-add');
+await sleep(400);
+check((await idb('meta')).find((m) => m.key === 'periodSettings').value.holidays.includes(holiday) && (await text('#holiday-list')).length > 0, 'a holiday can be added');
+await click(`#holiday-list button`);
+await sleep(400);
+check(!(await idb('meta')).find((m) => m.key === 'periodSettings').value.holidays.includes(holiday), 'and removed');
+// Home in cycle mode.
+await nav('#/');
+const cur = await pageDates(`s.periods().current()`);
+check((await text('#home-range')).includes(cur.range) && (await text('.hero')).includes('Spent this cycle') && !!(await ev(`!!document.getElementById('home-salary')`)), `Home: the ${cur.label} cycle with its dates (${cur.range}), “Spent this cycle” and Salary received`);
+await shot('41-home-cycle');
+// Budgets per cycle; calendar budgets untouched.
+await nav('#/plan');
+await ev(`(() => { const i = document.querySelector('.budget-input'); i.value = '7,777'; i.dispatchEvent(new Event('change')); return true; })()`);
+await sleep(400);
+const cb = (await idb('cycleBudgets')).find((r) => r.key === cur.key);
+check(cb && Object.values(cb.plan).includes(777700), `a budget edit in cycle mode is stored for the ${cur.label} cycle`);
+check(norm(await idb('budgets')) === calBudgetsBefore, 'calendar-month budgets are untouched by cycle edits');
+// The cycle picker.
+await nav('#/history');
+await click('#period-picker');
+check((await ev(`document.querySelectorAll('#cycle-list .cycle-row').length`)) >= 2 && (await text('#cycle-list')).includes(cur.range), 'the cycle picker lists cycles with their dates and status');
+await shot('42-cycle-picker');
+await click('.sheet-head .icon-btn');
+await sleep(250);
+// Salary received: a date before the current start is refused; today starts the next cycle.
+const yesterday2 = await pageDates(`d.addDays(d.todayYmd(), -1)`);
+await ev(`(async () => { const s = await import('./js/store.js'); await s.saveEntry({ amount: 4242, categoryId: s.activeCategories()[0].id, date: '${yesterday2}', note: 'cycle-move-test' }); return true; })()`);
+await nav('#/');
+await click('#home-salary');
+await shot('43-salary-received');
+await setVal('#salary-date', await pageDates(`d.todayYmd()`));
+await click('#salary-save');
+await sleep(600);
+const afterSalary = await pageDates(`s.periods().current()`);
+check(afterSalary.from === (await pageDates(`d.todayYmd()`)) && afterSalary.confirmed, `Salary received today: the current cycle now starts today and is confirmed (${afterSalary.label}, ${afterSalary.range})`);
+// Once the start is confirmed, a salary dated before it is refused (an expected start may still move earlier).
+await click('#home-salary');
+await setVal('#salary-date', await pageDates(`d.addDays(s.periods().current().from, -3)`));
+await click('#salary-save');
+check((await text('.sheet .form-error')).includes('before the current cycle’s start'), 'Salary received on a date before the confirmed current cycle is refused');
+await click('.sheet-head .icon-btn');
+await sleep(250);
+// Edit that start back by a day: the preview shows the entry that would move, then it moves.
+await nav('#/history');
+await click('#period-picker');
+await click(`#cycle-list [data-edit="${afterSalary.from}"]`);
+await setVal('#edit-start', yesterday2);
+check((await text('#edit-preview')).includes('1 expense would move'), 'editing a cycle’s start previews which expenses would move');
+await shot('44-edit-start');
+const prevStart = await pageDates(`s.periods().prev(s.periods().current()).from`);
+await setVal('#edit-start', prevStart);
+check((await text('.sheet .form-error')).includes('overlap'), 'a start that would overlap the previous cycle is refused');
+await setVal('#edit-start', yesterday2);
+await click('#edit-start-save');
+await sleep(600);
+check((await pageDates(`s.periods().current().from`)) === yesterday2 && (await text('main')).includes('cycle-move-test'), 'the start moved and the expense now counts in the current cycle');
+// Insights compares by day of cycle.
+await nav('#/insights');
+check((await text('#mtd-lede')).startsWith('Day '), `Insights compares by day of cycle (“${(await text('#mtd-lede')).slice(0, 60)}…”)`);
+// Back to calendar months: the month budgets are exactly as they were.
+await nav('#/settings');
+await click('#period-month');
+await sleep(500);
+check(norm(await idb('budgets')) === calBudgetsBefore && (await idb('meta')).find((m) => m.key === 'periodSettings').value.mode === 'month', 'switching back to Calendar month restores the month budgets exactly');
+
 // ---- reset to starter categories: CRUX's data only; VANE's data on the same origin survives ----
 const vaneSnapshot = () => ev(`(async () => {
   const dbs = {};
@@ -1042,7 +1139,7 @@ await ev(`(async () => {
 await send('Page.navigate', { url: BASE });
 await sleep(2500);
 const dbInfo = await ev(`indexedDB.databases().then((d) => d.find((x) => x.name === 'crux'))`);
-check(dbInfo.version === 3, 'migration: the database upgraded from version 1 to 3');
+check(dbInfo.version === 4, 'migration: the database upgraded from version 1 to 4');
 check(await ev(`new Promise((ok) => { const r = indexedDB.open('crux'); r.onsuccess = () => { ok(['goals', 'goalAdds', 'bills', 'income', 'incomeSources'].every((s) => r.result.objectStoreNames.contains(s))); r.result.close(); }; })`), 'migration: the goals, goalAdds, bills, income and incomeSources stores exist');
 const mc = (await idb('categories')).sort((a, b) => a.order - b.order);
 check(mc.map((c) => c.id).join() === 'old_c1,old_c2', 'migration: both old categories are there, and the 18 starters were not added on top');
@@ -1088,13 +1185,25 @@ await ev(`(async () => {
 })()`);
 await send('Page.navigate', { url: BASE });
 await sleep(2500);
-check((await ev(`indexedDB.databases().then((d) => d.find((x) => x.name === 'crux').version)`)) === 3, 'migration from 1.1.x: the database upgraded from version 2 to 3');
+check((await ev(`indexedDB.databases().then((d) => d.find((x) => x.name === 'crux').version)`)) === 4, 'migration from 1.1.x: the database upgraded from version 2 to 4');
 check((await idb('categories')).map((c) => c.id).join() === 'v2_c1' && (await idb('entries'))[0].amount === 333333 && (await idb('budgets'))[0].plan.v2_c1 === 2000000, 'migration from 1.1.x: categories, budgets and expenses intact');
 const v2g = await idb('goals');
 check(v2g[0].icon === 'tag' && /^#[0-9A-F]{6}$/i.test(v2g[0].color) && (await idb('categories'))[0].icon === 'tag', 'migration from 1.1.x: categories and goals gain an icon key and goals a colour');
 check(v2g.length === 1 && v2g[0].id === 'v2_g1' && v2g[0].buckets[0].name === 'FD' && (await idb('goalAdds'))[0].amount === 120000 && (await idb('bills'))[0].lastDay === true, 'migration from 1.1.x: goals, buckets, goal entries and bills intact (no starter goals added on top)');
 check((await idb('income')).length === 0 && (await idb('incomeSources')).length === 0 && (await idb('meta')).find((m) => m.key === 'lastExport').value === 1700000000009, 'migration from 1.1.x: the new income stores start empty; the last-export date is kept');
 check((await text('#month-card')).includes('add your income'), 'migration from 1.1.x: Home renders and asks for income');
+// The 1.1.x install has data, so it stays on calendar months and offers the switch with a summary first.
+check((await idb('meta')).find((m) => m.key === 'periodSettings')?.value.mode === 'month' && (await idb('cycles')).length === 0 && !!(await ev(`!!document.getElementById('cycle-invite')`)), 'an upgraded install keeps calendar months and invites the switch to pay cycles (nothing applied yet)');
+await click('#cycle-invite');
+check((await text('#migration')).includes('copied onto the cycle with the same name') && (await text('#migration')).includes('calendar-month budgets are kept'), 'the one-time migration summary says what moves before anything is applied');
+await shot('45-migration-summary');
+const v2Budgets = norm(await idb('budgets'));
+await click('#migration-apply');
+await sleep(700);
+const mc2 = await idb('cycles');
+check(mc2.length >= 1 && mc2.every((c) => c.source === 'rule') && (await idb('meta')).find((m) => m.key === 'periodSettings').value.mode === 'cycle', 'Switch to pay cycles: cycles are created by the rule from the earliest data');
+check((await idb('cycleBudgets')).some((r) => r.plan.v2_c1 === 2000000) && norm(await idb('budgets')) === v2Budgets, 'month budgets are copied onto cycles, and the calendar budgets are kept');
+check((await idb('entries'))[0].amount === 333333 && (await idb('entries'))[0].date.endsWith('-02'), 'expenses keep their real dates');
 check(JSON.stringify(await vaneSnapshot()) === JSON.stringify(vaneBefore), 'VANE’s data is still untouched at the end');
 
 check(failed.length === 0, `no failed requests${failed.length ? `: ${failed.slice(0, 3).join(', ')}` : ''}`);

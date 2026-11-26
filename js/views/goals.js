@@ -5,7 +5,8 @@ import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { todayYmd, monthOf, isYmd, longDate, dayLabel, monthLabel } from '../dates.js';
 import { goalSummary, savedInMonth, maxWithdrawal } from '../goals.js';
 import { COLORS, GOAL_STARTERS } from '../seed.js';
-import { state, saveGoal, saveGoalAdd, deleteGoalAdd, restoreGoalAdd, goalById, uid, moveGoal } from '../store.js';
+import { state, saveGoal, saveGoalAdd, deleteGoalAdd, restoreGoalAdd, goalById, uid, moveGoal, periods } from '../store.js';
+import { unitWord } from './cyclesui.js';
 import { go, refresh } from '../router.js';
 import { pageHead, emptyState, menuButton } from './common.js';
 
@@ -20,10 +21,11 @@ export function render() {
   const today = todayYmd();
   const active = state.goals.filter((g) => !g.archived);
   const archived = state.goals.filter((g) => g.archived);
-  const saved = savedInMonth(state.goalAdds, monthOf(today));
+  const per = periods().current();
+  const saved = savedInMonth(state.goalAdds, per);
   return h('div', { class: 'page goals' },
     pageHead('Goals'),
-    h('p', { class: 'saved-line' }, h('span', { class: 'muted' }, `Saved in ${monthLabel(monthOf(today))}: `), h('strong', { class: 'num', id: 'saved-this-month' }, money(saved)),
+    h('p', { class: 'saved-line' }, h('span', { class: 'muted' }, `Saved this ${unitWord()} (${per.kind === 'cycle' ? per.range : monthLabel(per.key)}): `), h('strong', { class: 'num', id: 'saved-this-month' }, money(saved)),
       h('span', { class: 'muted small' }, ' · not counted as spending')),
     active.length > 1 ? h('p', { class: 'muted small lede' }, 'Priority is the order below: “Allocate leftover” fills the top goal first. Use the arrows to reorder.') : null,
     active.length ? h('ul', { class: 'goal-list' }, active.map((g, i) => h('li', {}, goalCard(g, today, i, active.length)))) : emptyState('No goals yet', 'Add one for an emergency fund, a trip, investments…', null, 'target'),
@@ -46,7 +48,7 @@ function goalFigures(g, s, today) {
     rows.push(h('p', { class: 'muted' }, 'No target set'));
   }
   const m = s.month;
-  rows.push(h('p', { class: 'goal-line' }, 'This month: ', h('span', { class: 'num strong' }, money(m.added, { sign: true })),
+  rows.push(h('p', { class: 'goal-line' }, `This ${unitWord()}: `, h('span', { class: 'num strong' }, money(m.added, { sign: true })),
     m.plan ? [' of ', h('span', { class: 'num' }, money(m.plan)), ` planned · ${m.pct}%`] : h('span', { class: 'muted' }, ' · no monthly plan')));
   if (m.plan) rows.push(h('div', { class: 'bar bar-thin' }, h('div', { class: 'bar-fill', style: { width: `${Math.min(100, m.pct)}%` } })));
   const n = s.needed;
@@ -71,7 +73,7 @@ function bucketBlock(split) {
 }
 
 function goalCard(g, today, i, n) {
-  const s = goalSummary(g, state.goalAdds, today);
+  const s = goalSummary(g, state.goalAdds, today, periods().current());
   return h('article', { class: 'card goal-card', 'aria-label': g.name },
     h('div', { class: 'goal-head' },
       h('button', { class: 'goal-title', type: 'button', onclick: () => go(`#/goal/${g.id}`), 'aria-label': `${g.name}: open history` }, badge(g), h('span', {}, g.name)),
@@ -96,7 +98,7 @@ export const detail = {
     const g = goalById(params.id);
     if (!g) return h('div', { class: 'page' }, emptyState('This goal no longer exists', null, h('a', { class: 'btn', href: '#/goals' }, 'Goals')));
     const today = todayYmd();
-    const s = goalSummary(g, state.goalAdds, today);
+    const s = goalSummary(g, state.goalAdds, today, periods().current());
     const adds = state.goalAdds.filter((a) => a.goalId === g.id);
     const bucketName = (id) => g.buckets.find((b) => b.id === id)?.name;
     return h('div', { class: 'page goal-detail' },

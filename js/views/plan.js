@@ -1,14 +1,15 @@
-// Plan: categories and their monthly budgets. Edits apply from the month shown onward; earlier months keep theirs.
+// Plan: categories and their budgets per month or pay cycle. Edits apply from the period shown onward; earlier ones keep theirs.
 import { h, icon, badge, sheet, toast, confirmDialog } from '../ui.js';
 import { parseAmount, paiseToInput, formatINR } from '../money.js';
 import { monthLabel, isMonth } from '../dates.js';
 import { totalBudget } from '../budget.js';
 import {
-  state, planFor, currentMonth, activeCategories, setBudget, addCategory, updateCategory, moveCategory,
+  state, planFor, periods, activeCategories, setBudget, addCategory, updateCategory, moveCategory,
   archiveCategory, restoreCategory, COLORS, catById,
 } from '../store.js';
 import { refresh, setQuery, go } from '../router.js';
-import { monthNav, pageHead } from './common.js';
+import { pageHead } from './common.js';
+import { periodNav, unitWord } from './cyclesui.js';
 import { iconAndColor } from './picker.js';
 
 export const name = 'plan';
@@ -18,22 +19,26 @@ export const title = 'Plan';
 let reordering = false; // the up/down controls show only while reordering, so rows keep room for names and budgets
 
 export function render({ query }) {
-  const month = isMonth(query.get('m')) ? query.get('m') : currentMonth();
+  const P = periods();
+  const current = P.current().key;
+  const per = isMonth(query.get('m')) ? P.byKey(query.get('m')) : P.current();
+  const month = per.key;
+  const unit = unitWord();
   const plan = planFor(month);
   const active = activeCategories();
   const planned = active.filter((c) => c.id in plan);
   const unplanned = active.filter((c) => !(c.id in plan));
   const archived = state.categories.filter((c) => c.archived);
   const totalEl = h('span', { class: 'num' }, formatINR(totalBudget(plan)));
-  const past = month < currentMonth();
+  const past = month < current;
 
   return h('div', { class: 'page plan' },
     pageHead('Plan'),
-    monthNav(month, (m) => setQuery({ m: m === currentMonth() ? null : m })),
+    periodNav(per, (m) => setQuery({ m: m === current ? null : m })),
     h('p', { class: `note ${past ? 'note-warn' : ''}` },
-      past ? `You’re editing a past month. Changes apply to ${monthLabel(month)} and every month after it.`
-        : `Changes apply from ${monthLabel(month)} onward. Earlier months keep their budgets.`),
-    h('section', { class: 'card plan-total' }, h('span', { class: 'muted' }, 'Monthly budget'), h('strong', { class: 'plan-total-amt' }, totalEl)),
+      past ? `You’re editing a past ${unit}. Changes apply to ${monthLabel(month)} and every ${unit} after it.`
+        : `Changes apply from ${monthLabel(month)} onward. Earlier ${unit}s keep their budgets.`),
+    h('section', { class: 'card plan-total' }, h('span', { class: 'muted' }, `Budget per ${unit}`), h('strong', { class: 'plan-total-amt' }, totalEl)),
 
     h('div', { class: 'section-head' }, h('h2', {}, `Categories (${planned.length})`),
       planned.length > 1 ? h('button', { class: 'btn btn-small', type: 'button', id: 'reorder-toggle', 'aria-pressed': String(reordering), onclick: () => { reordering = !reordering; refresh(); } }, reordering ? [icon('check'), 'Done'] : 'Reorder') : null),
@@ -66,7 +71,7 @@ function planRow(c, paise, month, i, n, onTotal) {
       await setBudget(month, c.id, v);
       input.value = paiseToInput(v, { group: true });
       onTotal();
-      toast(`${c.name}: ${formatINR(v)} a month from ${monthLabel(month, { short: true })}`);
+      toast(`${c.name}: ${formatINR(v)} a ${unitWord()} from ${monthLabel(month, { short: true })}`);
     },
   });
   return h('li', { class: 'plan-row' },
@@ -105,7 +110,7 @@ function editSheet(cat, month) {
 
     return h('form', { class: 'sheet-body', novalidate: true, onsubmit: (e) => { e.preventDefault(); save(); } },
       h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Name'), nameIn),
-      budgetIn && h('label', { class: 'field' }, h('span', { class: 'field-label' }, `Monthly budget from ${monthLabel(month)} (₹)`), budgetIn),
+      budgetIn && h('label', { class: 'field' }, h('span', { class: 'field-label' }, `Budget per ${unitWord()} from ${monthLabel(month)} (₹)`), budgetIn),
       look.node,
       err,
       h('button', { class: 'btn btn-primary btn-big', type: 'submit' }, cat ? 'Save' : 'Add category'),
@@ -114,7 +119,7 @@ function editSheet(cat, month) {
         onclick: async () => {
           const ok = await confirmDialog({
             title: `Archive ${cat.name}?`,
-            body: [`It leaves the plan from ${monthLabel(month)} onward. Earlier months, and every expense already logged in it, stay as they are.`, 'You can restore it from Plan any time.'],
+            body: [`It leaves the plan from ${monthLabel(month)} onward. Earlier periods, and every expense already logged in it, stay as they are.`, 'You can restore it from Plan any time.'],
             ok: 'Archive', danger: true,
           });
           if (!ok) return;
